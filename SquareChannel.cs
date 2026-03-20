@@ -29,6 +29,8 @@ public sealed class SquareChannel
     private int shadowFrequency;
     private bool sweepEnabled;
 
+    public bool DacEnabled => (NR12 & 0xF8) != 0;
+
     public SquareChannel(bool hasSweep)
     {
         this.hasSweep = hasSweep;
@@ -69,7 +71,8 @@ public sealed class SquareChannel
     public void WriteNR12(byte value)
     {
         NR12 = value;
-        if ((value & 0xF8) == 0)
+
+        if (!DacEnabled)
             Enabled = false;
     }
 
@@ -81,6 +84,7 @@ public sealed class SquareChannel
     public void WriteNR14(byte value)
     {
         NR14 = value;
+
         if ((value & 0x80) != 0)
             Trigger();
     }
@@ -100,7 +104,10 @@ public sealed class SquareChannel
 
     public void ClockLength()
     {
-        if ((NR14 & 0x40) == 0 || !Enabled)
+        if (!Enabled)
+            return;
+
+        if ((NR14 & 0x40) == 0)
             return;
 
         if (lengthCounter > 0)
@@ -129,11 +136,13 @@ public sealed class SquareChannel
         bool increase = (NR12 & 0x08) != 0;
         if (increase)
         {
-            if (volume < 15) volume++;
+            if (volume < 15)
+                volume++;
         }
         else
         {
-            if (volume > 0) volume--;
+            if (volume > 0)
+                volume--;
         }
     }
 
@@ -178,24 +187,23 @@ public sealed class SquareChannel
         return negate ? shadowFrequency - delta : shadowFrequency + delta;
     }
 
-    public float GetOutput()
+    public int GetDigitalOutput()
     {
         if (!Enabled)
-            return 0f;
+            return 0;
 
-        if ((NR12 & 0xF8) == 0)
-            return 0f;
+        if (!DacEnabled)
+            return 0;
 
         int duty = (NR11 >> 6) & 0x03;
         int bit = DutyTable[duty][dutyStep];
 
-        float amp = volume / 15f;
-        return bit != 0 ? amp : -amp;
+        return bit != 0 ? volume : 0;
     }
 
     private void Trigger()
     {
-        if ((NR12 & 0xF8) == 0)
+        if (!DacEnabled)
         {
             Enabled = false;
             return;

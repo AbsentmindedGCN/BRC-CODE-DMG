@@ -4,32 +4,29 @@ public sealed class WaveChannel
 {
     public bool Enabled { get; private set; }
 
-    public byte NR30 { get; private set; } // DAC power
-    public byte NR31 { get; private set; } // length
-    public byte NR32 { get; private set; } // output level
-    public byte NR33 { get; private set; } // frequency low
-    public byte NR34 { get; private set; } // trigger / length enable / frequency high
+    public byte NR30 { get; private set; }
+    public byte NR31 { get; private set; }
+    public byte NR32 { get; private set; }
+    public byte NR33 { get; private set; }
+    public byte NR34 { get; private set; }
 
     private readonly byte[] waveRam = new byte[16];
 
     private int timer;
     private int lengthCounter;
-    private int sampleIndex; // 0..31
-    private int lastSample;  // 0..15
+    private int sampleIndex;   // 0..31
+    private int sampleBuffer;  // current 4-bit sample
+
+    public bool DacEnabled => (NR30 & 0x80) != 0;
 
     public void PowerOff()
     {
         Enabled = false;
-        NR30 = 0;
-        NR31 = 0;
-        NR32 = 0;
-        NR33 = 0;
-        NR34 = 0;
-
+        NR30 = NR31 = NR32 = NR33 = NR34 = 0;
         timer = 0;
         lengthCounter = 0;
         sampleIndex = 0;
-        lastSample = 0;
+        sampleBuffer = 0;
 
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = 0;
@@ -41,15 +38,13 @@ public sealed class WaveChannel
         timer = 0;
         lengthCounter = 0;
         sampleIndex = 0;
-        lastSample = 0;
+        sampleBuffer = 0;
     }
 
     public void WriteNR30(byte value)
     {
         NR30 = value;
-
-        // DAC off disables channel immediately
-        if ((NR30 & 0x80) == 0)
+        if (!DacEnabled)
             Enabled = false;
     }
 
@@ -72,7 +67,6 @@ public sealed class WaveChannel
     public void WriteNR34(byte value)
     {
         NR34 = value;
-
         if ((value & 0x80) != 0)
             Trigger();
     }
@@ -89,7 +83,6 @@ public sealed class WaveChannel
         int index = address - 0xFF30;
         if ((uint)index < 16)
             return waveRam[index];
-
         return 0xFF;
     }
 
@@ -104,16 +97,13 @@ public sealed class WaveChannel
         {
             timer += (2048 - GetFrequency()) * 2;
             sampleIndex = (sampleIndex + 1) & 31;
-            lastSample = ReadSampleNibble(sampleIndex);
+            sampleBuffer = ReadSampleNibble(sampleIndex);
         }
     }
 
     public void ClockLength()
     {
-        if (!Enabled)
-            return;
-
-        if ((NR34 & 0x40) == 0)
+        if (!Enabled || (NR34 & 0x40) == 0)
             return;
 
         if (lengthCounter > 0)
@@ -124,39 +114,30 @@ public sealed class WaveChannel
         }
     }
 
-    public float GetOutput()
+    public int GetDigitalOutput()
     {
-        if (!Enabled)
-            return 0f;
-
-        if ((NR30 & 0x80) == 0)
-            return 0f;
+        if (!Enabled || !DacEnabled)
+            return 0;
 
         int volumeCode = (NR32 >> 5) & 0x03;
         if (volumeCode == 0)
-            return 0f;
+            return 0;
 
-        int sample = lastSample;
+        int sample = sampleBuffer;
 
         switch (volumeCode)
         {
-            case 1: // 100%
-                break;
-            case 2: // 50%
-                sample >>= 1;
-                break;
-            case 3: // 25%
-                sample >>= 2;
-                break;
+            case 1: break;      // 100%
+            case 2: sample >>= 1; break; // 50%
+            case 3: sample >>= 2; break; // 25%
         }
 
-        // center 0..15 around zero
-        return (sample - 7.5f) / 7.5f;
+        return sample & 0x0F;
     }
 
     private void Trigger()
     {
-        if ((NR30 & 0x80) == 0)
+        if (!DacEnabled)
         {
             Enabled = false;
             return;
@@ -168,8 +149,12 @@ public sealed class WaveChannel
             lengthCounter = 256;
 
         timer = (2048 - GetFrequency()) * 2;
+
+        // Common-behavior approximation.
+        // Pan Docs notes CH3 trigger quirks on real hardware,
+        // but this is much closer than the old stub.
         sampleIndex = 0;
-        lastSample = ReadSampleNibble(sampleIndex);
+        sampleBuffer = ReadSampleNibble(sampleIndex);
     }
 
     private int GetFrequency()
@@ -180,11 +165,7 @@ public sealed class WaveChannel
     private int ReadSampleNibble(int index)
     {
         byte packed = waveRam[index >> 1];
-
-        if ((index & 1) == 0)
-            return (packed >> 4) & 0x0F;
-
-        return packed & 0x0F;
+        return (index & 1) == 0 ? ((packed >> 4) & 0x0F) : (packed & 0x0F);
     }
 
     public void SaveState(BinaryWriter writer)
@@ -195,12 +176,10 @@ public sealed class WaveChannel
         writer.Write(NR32);
         writer.Write(NR33);
         writer.Write(NR34);
-
         writer.Write(timer);
         writer.Write(lengthCounter);
         writer.Write(sampleIndex);
-        writer.Write(lastSample);
-
+        writer.Write(sampleBuffer);
         writer.Write(waveRam.Length);
         writer.Write(waveRam);
     }
@@ -213,15 +192,13 @@ public sealed class WaveChannel
         NR32 = reader.ReadByte();
         NR33 = reader.ReadByte();
         NR34 = reader.ReadByte();
-
         timer = reader.ReadInt32();
         lengthCounter = reader.ReadInt32();
         sampleIndex = reader.ReadInt32();
-        lastSample = reader.ReadInt32();
+        sampleBuffer = reader.ReadInt32();
 
         int len = reader.ReadInt32();
         byte[] data = reader.ReadBytes(len);
-
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = i < data.Length ? data[i] : (byte)0;
     }

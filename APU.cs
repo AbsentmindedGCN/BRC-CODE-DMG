@@ -4,10 +4,10 @@ using System.IO;
 public sealed class APU
 {
     private const int CpuClock = 4194304;
-    private const int SampleRate = 48000;
     private const int SampleFifoSize = 32768; // interleaved stereo floats
 
     private readonly MMU mmu;
+    private readonly int sampleRate;
 
     private readonly SquareChannel ch1;
     private readonly SquareChannel ch2;
@@ -28,29 +28,53 @@ public sealed class APU
     private float hpPrevInR;
     private float hpPrevOutR;
 
-    // simple DC-blocking / high-pass filter coefficient
-    private const float HighPassAlpha = 0.996f;
+    private const float HighPassAlpha = 0.9992f;
 
-    public APU(MMU mmu)
+    private bool enabled = true;
+
+    public APU(MMU mmu, int sampleRate = 48000)
     {
         this.mmu = mmu;
+        this.sampleRate = sampleRate > 0 ? sampleRate : 48000;
+
         ch1 = new SquareChannel(true);
         ch2 = new SquareChannel(false);
         ch3 = new WaveChannel();
         ch4 = new NoiseChannel();
     }
 
+    public void SetEnabled(bool enabled)
+    {
+        this.enabled = enabled;
+    }
+
     public void Step(int tCycles)
     {
+        if (!enabled)
+        {
+            sampleCycleCounter += tCycles;
+            double cps = (double)CpuClock / sampleRate;
+
+            while (sampleCycleCounter >= cps)
+            {
+                sampleCycleCounter -= cps;
+                PushStereoSample(0f, 0f);
+            }
+
+            return;
+        }
+
         if ((mmu.NR52 & 0x80) == 0)
         {
             sampleCycleCounter += tCycles;
-            double cyclesPerSample = (double)CpuClock / SampleRate;
+            double cyclesPerSample = (double)CpuClock / sampleRate;
+
             while (sampleCycleCounter >= cyclesPerSample)
             {
                 sampleCycleCounter -= cyclesPerSample;
                 PushStereoSample(0f, 0f);
             }
+
             return;
         }
 
@@ -60,11 +84,11 @@ public sealed class APU
         ch4.StepTimer(tCycles);
 
         sampleCycleCounter += tCycles;
-        double cps = (double)CpuClock / SampleRate;
+        double cyclesPerSampleActive = (double)CpuClock / sampleRate;
 
-        while (sampleCycleCounter >= cps)
+        while (sampleCycleCounter >= cyclesPerSampleActive)
         {
-            sampleCycleCounter -= cps;
+            sampleCycleCounter -= cyclesPerSampleActive;
             MixAndPushSample();
         }
     }
@@ -76,7 +100,6 @@ public sealed class APU
 
         frameSequencerStep = (frameSequencerStep + 1) & 7;
 
-        // length: 256 Hz on steps 0,2,4,6
         if ((frameSequencerStep & 1) == 0)
         {
             ch1.ClockLength();
@@ -85,13 +108,11 @@ public sealed class APU
             ch4.ClockLength();
         }
 
-        // sweep: 128 Hz on steps 2,6
         if (frameSequencerStep == 2 || frameSequencerStep == 6)
         {
             ch1.ClockSweep();
         }
 
-        // envelope: 64 Hz on step 7
         if (frameSequencerStep == 7)
         {
             ch1.ClockEnvelope();
@@ -156,7 +177,6 @@ public sealed class APU
 
         if (!apuOn)
         {
-            // allow only wave RAM writes and NR52 while off
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
             return;
@@ -224,12 +244,22 @@ public sealed class APU
         }
     }
 
+    private static float DigitalToAnalog(int digital)
+    {
+        return 1.0f - (digital / 7.5f);
+    }
+
+    private float Channel1Analog() => ch1.DacEnabled ? DigitalToAnalog(ch1.GetDigitalOutput()) : 0f;
+    private float Channel2Analog() => ch2.DacEnabled ? DigitalToAnalog(ch2.GetDigitalOutput()) : 0f;
+    private float Channel3Analog() => ch3.DacEnabled ? DigitalToAnalog(ch3.GetDigitalOutput()) : 0f;
+    private float Channel4Analog() => ch4.DacEnabled ? DigitalToAnalog(ch4.GetDigitalOutput()) : 0f;
+
     private void MixAndPushSample()
     {
-        float s1 = ch1.GetOutput();
-        float s2 = ch2.GetOutput();
-        float s3 = ch3.GetOutput();
-        float s4 = ch4.GetOutput();
+        float s1 = Channel1Analog();
+        float s2 = Channel2Analog();
+        float s3 = Channel3Analog();
+        float s4 = Channel4Analog();
 
         float left = 0f;
         float right = 0f;
@@ -244,14 +274,12 @@ public sealed class APU
         if ((mmu.NR51 & 0x04) != 0) right += s3;
         if ((mmu.NR51 & 0x08) != 0) right += s4;
 
-        float leftVol = ((mmu.NR50 >> 4) & 0x07) / 7f;
-        float rightVol = (mmu.NR50 & 0x07) / 7f;
+        float leftVol = (((mmu.NR50 >> 4) & 0x07) + 1) / 8f;
+        float rightVol = ((mmu.NR50 & 0x07) + 1) / 8f;
 
-        // Lower overall gain to reduce harsh clipping
-        left *= leftVol * 0.12f;
-        right *= rightVol * 0.12f;
+        left *= leftVol * 0.25f;
+        right *= rightVol * 0.25f;
 
-        // DC blocking / simple high-pass
         left = HighPassLeft(left);
         right = HighPassRight(right);
 
@@ -306,6 +334,7 @@ public sealed class APU
     {
         writer.Write(frameSequencerStep);
         writer.Write(sampleCycleCounter);
+        writer.Write(sampleRate);
 
         writer.Write(mmu.NR50);
         writer.Write(mmu.NR51);
@@ -321,6 +350,8 @@ public sealed class APU
     {
         frameSequencerStep = reader.ReadInt32();
         sampleCycleCounter = reader.ReadDouble();
+
+        _ = reader.ReadInt32();
 
         mmu.NR50 = reader.ReadByte();
         mmu.NR51 = reader.ReadByte();

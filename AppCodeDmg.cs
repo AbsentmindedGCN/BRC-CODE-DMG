@@ -111,6 +111,7 @@ namespace BRCCodeDmg
             {
                 SaveState();
             }
+
             _emulator?.SaveRam();
         }
 
@@ -155,6 +156,12 @@ namespace BRCCodeDmg
             }
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+
+            if (CodeDmgPlugin.ConfigSettings != null)
+                _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+            else
+                _emulator.SetAudioEnabled(false);
+
             if (_audioDriver != null)
                 _audioDriver.SetEmulator(_emulator);
         }
@@ -211,28 +218,6 @@ namespace BRCCodeDmg
             }
         }
 
-        /*
-        private void TryLoadState()
-        {
-            if (_emulator == null)
-                return;
-
-            string statePath = GetStatePath();
-            if (!File.Exists(statePath))
-                return;
-
-            try
-            {
-                byte[] stateData = File.ReadAllBytes(statePath);
-                _emulator.DeserializeState(stateData);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[CODE-DMG] Failed to load state: " + ex.Message);
-            }
-        }
-        */
-
         private void TryLoadState()
         {
             if (_emulator == null)
@@ -251,6 +236,11 @@ namespace BRCCodeDmg
                     _emulator.BootRomPath,
                     _emulator.SavePath
                 );
+
+                if (CodeDmgPlugin.ConfigSettings != null)
+                    loaded.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+                else
+                    loaded.SetAudioEnabled(false);
 
                 loaded.DeserializeState(stateData);
                 _emulator = loaded;
@@ -276,6 +266,7 @@ namespace BRCCodeDmg
                 }
 
                 TryBootEmulator();
+
                 if (_audioDriver != null)
                     _audioDriver.SetEmulator(_emulator);
             }
@@ -291,33 +282,30 @@ namespace BRCCodeDmg
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
 
-            // --- A / B ---
             _emulator.SetButton(
                 GameBoyButton.A,
                 Input.GetKey(cfg.A.Value) ||
-                Input.GetKey(KeyCode.JoystickButton0) // Controller A
+                Input.GetKey(KeyCode.JoystickButton0)
             );
 
             _emulator.SetButton(
                 GameBoyButton.B,
                 Input.GetKey(cfg.B.Value) ||
-                Input.GetKey(KeyCode.JoystickButton1) // Controller B
+                Input.GetKey(KeyCode.JoystickButton1)
             );
 
-            // --- Start / Select ---
             _emulator.SetButton(
                 GameBoyButton.Start,
                 Input.GetKey(cfg.Start.Value) ||
-                Input.GetKey(KeyCode.JoystickButton3) // Controller Y
+                Input.GetKey(KeyCode.JoystickButton3)
             );
 
             _emulator.SetButton(
                 GameBoyButton.Select,
                 Input.GetKey(cfg.Select.Value) ||
-                Input.GetKey(KeyCode.JoystickButton2) // Controller X
+                Input.GetKey(KeyCode.JoystickButton2)
             );
 
-            // --- D-Pad ---
             _emulator.SetButton(
                 GameBoyButton.Right,
                 Input.GetKey(cfg.Right.Value) || h > 0.5f

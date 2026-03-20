@@ -4,10 +4,10 @@ public sealed class NoiseChannel
 {
     public bool Enabled { get; private set; }
 
-    public byte NR41 { get; private set; } // length
-    public byte NR42 { get; private set; } // envelope
-    public byte NR43 { get; private set; } // clock / width / divisor
-    public byte NR44 { get; private set; } // trigger / length enable
+    public byte NR41 { get; private set; }
+    public byte NR42 { get; private set; }
+    public byte NR43 { get; private set; }
+    public byte NR44 { get; private set; }
 
     private int timer;
     private int lengthCounter;
@@ -15,14 +15,12 @@ public sealed class NoiseChannel
     private int envelopeTimer;
     private ushort lfsr;
 
+    public bool DacEnabled => (NR42 & 0xF8) != 0;
+
     public void PowerOff()
     {
         Enabled = false;
-        NR41 = 0;
-        NR42 = 0;
-        NR43 = 0;
-        NR44 = 0;
-
+        NR41 = NR42 = NR43 = NR44 = 0;
         timer = 0;
         lengthCounter = 0;
         volume = 0;
@@ -49,9 +47,7 @@ public sealed class NoiseChannel
     public void WriteNR42(byte value)
     {
         NR42 = value;
-
-        // DAC off disables channel
-        if ((NR42 & 0xF8) == 0)
+        if (!DacEnabled)
             Enabled = false;
     }
 
@@ -63,7 +59,6 @@ public sealed class NoiseChannel
     public void WriteNR44(byte value)
     {
         NR44 = value;
-
         if ((value & 0x80) != 0)
             Trigger();
     }
@@ -73,17 +68,20 @@ public sealed class NoiseChannel
         if (!Enabled)
             return;
 
+        int period = GetNoisePeriod();
+        if (period == int.MaxValue)
+            return;
+
         timer -= tCycles;
 
         while (timer <= 0)
         {
-            timer += GetNoisePeriod();
+            timer += period;
 
-            int xorBit = ((lfsr & 0x0001) ^ ((lfsr >> 1) & 0x0001));
+            int xorBit = (lfsr & 1) ^ ((lfsr >> 1) & 1);
             lfsr >>= 1;
             lfsr |= (ushort)(xorBit << 14);
 
-            // width mode: also copy into bit 6
             if ((NR43 & 0x08) != 0)
             {
                 lfsr &= 0xFFBF;
@@ -94,10 +92,7 @@ public sealed class NoiseChannel
 
     public void ClockLength()
     {
-        if (!Enabled)
-            return;
-
-        if ((NR44 & 0x40) == 0)
+        if (!Enabled || (NR44 & 0x40) == 0)
             return;
 
         if (lengthCounter > 0)
@@ -126,32 +121,26 @@ public sealed class NoiseChannel
         bool increase = (NR42 & 0x08) != 0;
         if (increase)
         {
-            if (volume < 15)
-                volume++;
+            if (volume < 15) volume++;
         }
         else
         {
-            if (volume > 0)
-                volume--;
+            if (volume > 0) volume--;
         }
     }
 
-    public float GetOutput()
+    public int GetDigitalOutput()
     {
-        if (!Enabled)
-            return 0f;
+        if (!Enabled || !DacEnabled)
+            return 0;
 
-        if ((NR42 & 0xF8) == 0)
-            return 0f;
-
-        int bit = (~lfsr) & 1;
-        float amp = volume / 15f;
-        return bit != 0 ? amp : -amp;
+        // Hardware output is 0 or current envelope volume
+        return (((~lfsr) & 1) != 0) ? volume : 0;
     }
 
     private void Trigger()
     {
-        if ((NR42 & 0xF8) == 0)
+        if (!DacEnabled)
         {
             Enabled = false;
             return;
@@ -163,7 +152,6 @@ public sealed class NoiseChannel
             lengthCounter = 64;
 
         volume = (NR42 >> 4) & 0x0F;
-
         envelopeTimer = NR42 & 0x07;
         if (envelopeTimer == 0)
             envelopeTimer = 8;
@@ -177,21 +165,11 @@ public sealed class NoiseChannel
         int divisorCode = NR43 & 0x07;
         int shift = (NR43 >> 4) & 0x0F;
 
-        int divisor;
+        // Pan Docs: shift 14 or 15 => no clocks
+        if (shift >= 14)
+            return int.MaxValue;
 
-        switch (divisorCode)
-        {
-            case 0: divisor = 8; break;
-            case 1: divisor = 16; break;
-            case 2: divisor = 32; break;
-            case 3: divisor = 48; break;
-            case 4: divisor = 64; break;
-            case 5: divisor = 80; break;
-            case 6: divisor = 96; break;
-            case 7: divisor = 112; break;
-            default: divisor = 8; break;
-        }
-
+        int divisor = divisorCode == 0 ? 8 : divisorCode * 16;
         return divisor << shift;
     }
 
@@ -202,7 +180,6 @@ public sealed class NoiseChannel
         writer.Write(NR42);
         writer.Write(NR43);
         writer.Write(NR44);
-
         writer.Write(timer);
         writer.Write(lengthCounter);
         writer.Write(volume);
@@ -217,7 +194,6 @@ public sealed class NoiseChannel
         NR42 = reader.ReadByte();
         NR43 = reader.ReadByte();
         NR44 = reader.ReadByte();
-
         timer = reader.ReadInt32();
         lengthCounter = reader.ReadInt32();
         volume = reader.ReadInt32();

@@ -23,6 +23,9 @@ namespace BRCCodeDmg
         public ConfigEntry<bool> AutoSaveOnClose;
         public ConfigEntry<bool> AutoLoadOnOpen;
 
+        // Audio
+        public ConfigEntry<bool> EnableAudio;
+
         public CodeDmgConfig(ConfigFile config)
         {
             RomPath = config.Bind(
@@ -55,6 +58,13 @@ namespace BRCCodeDmg
                 "AutoLoadOnOpen",
                 true,
                 "Automatically load state when opening the app"
+            );
+
+            EnableAudio = config.Bind(
+                "Audio",
+                "EnableAudio",
+                false,
+                "Enable Game Boy audio emulation."
             );
         }
     }

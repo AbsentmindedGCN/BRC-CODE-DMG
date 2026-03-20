@@ -1,12 +1,13 @@
 ﻿using System;
 using System.IO;
+using UnityEngine;
 
 namespace BRCCodeDmg
 {
     public sealed class CodeDmgEmulator
     {
         private const int CyclesPerFrame = 70224;
-        private const int SaveStateVersion = 2;
+        private const int SaveStateVersion = 1;
 
         private MMU Mmu { get; }
         private CPU Cpu { get; }
@@ -14,6 +15,8 @@ namespace BRCCodeDmg
         public APU Apu { get; }
         private Joypad Joypad { get; }
         private Timer Timer { get; }
+
+        public bool AudioEnabled { get; private set; } = false;
 
         private readonly string _savePath;
         private readonly string _romPath;
@@ -41,41 +44,23 @@ namespace BRCCodeDmg
             Cpu = new CPU(Mmu);
             Ppu = new PPU(Mmu);
             Joypad = new Joypad(Mmu);
-            Apu = new APU(Mmu);
+            Apu = new APU(Mmu, AudioSettings.outputSampleRate);
             Timer = new Timer(Mmu, Apu);
 
             Mmu.Apu = Apu;
             Mmu.Timer = Timer;
 
             if (!File.Exists(bootRomPath))
-            {
                 Cpu.Reset();
-
-                // Approximate post-boot DMG audio defaults
-                Mmu.NR52 = 0x80; // APU enabled
-                Mmu.NR50 = 0x77; // full left/right master volume
-                Mmu.NR51 = 0xF3; // common DMG routing default
-            }
 
             Mmu.Load(_savePath);
         }
 
-        /*
-        public void StepFrame()
+        public void SetAudioEnabled(bool enabled)
         {
-            int cycles = 0;
-
-            while (cycles < CyclesPerFrame)
-            {
-                int executed = Cpu.ExecuteInstruction();
-                cycles += executed;
-
-                Ppu.Step(executed);
-                Timer.Step(executed);
-                Apu.Step(executed);
-            }
+            AudioEnabled = enabled;
+            Apu?.SetEnabled(enabled);
         }
-        */
 
         public void StepFrame()
         {
