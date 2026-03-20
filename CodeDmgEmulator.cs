@@ -84,13 +84,11 @@ namespace BRCCodeDmg
             while (cycles < CyclesPerFrame)
             {
                 int executed = Cpu.ExecuteInstruction();
-                int tCycles = executed * 4;
+                cycles += executed;
 
-                cycles += tCycles;
-
-                Ppu.Step(tCycles);
-                Timer.Step(tCycles);
-                Apu.Step(tCycles);
+                Ppu.Step(executed);
+                Timer.Step(executed);
+                Apu.Step(executed);
             }
         }
 

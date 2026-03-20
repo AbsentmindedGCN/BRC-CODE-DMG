@@ -104,27 +104,27 @@ public sealed class APU
     {
         switch (address)
         {
-            case 0xFF10: return ch1.NR10;
-            case 0xFF11: return ch1.NR11;
+            case 0xFF10: return (byte)(ch1.NR10 | 0x80);
+            case 0xFF11: return (byte)(ch1.NR11 | 0x3F);
             case 0xFF12: return ch1.NR12;
-            case 0xFF13: return ch1.NR13;
+            case 0xFF13: return 0xFF;
             case 0xFF14: return (byte)(ch1.NR14 | 0xBF);
 
-            case 0xFF16: return ch2.NR11;
+            case 0xFF16: return (byte)(ch2.NR11 | 0x3F);
             case 0xFF17: return ch2.NR12;
-            case 0xFF18: return ch2.NR13;
+            case 0xFF18: return 0xFF;
             case 0xFF19: return (byte)(ch2.NR14 | 0xBF);
 
-            case 0xFF1A: return ch3.NR30;
-            case 0xFF1B: return ch3.NR31;
-            case 0xFF1C: return ch3.NR32;
-            case 0xFF1D: return ch3.NR33;
-            case 0xFF1E: return ch3.NR34;
+            case 0xFF1A: return (byte)(ch3.NR30 | 0x7F);
+            case 0xFF1B: return 0xFF;
+            case 0xFF1C: return (byte)(ch3.NR32 | 0x9F);
+            case 0xFF1D: return 0xFF;
+            case 0xFF1E: return (byte)(ch3.NR34 | 0xBF);
 
-            case 0xFF20: return ch4.NR41;
+            case 0xFF20: return 0xFF;
             case 0xFF21: return ch4.NR42;
             case 0xFF22: return ch4.NR43;
-            case 0xFF23: return ch4.NR44;
+            case 0xFF23: return (byte)(ch4.NR44 | 0xBF);
 
             case 0xFF24: return mmu.NR50;
             case 0xFF25: return mmu.NR51;
