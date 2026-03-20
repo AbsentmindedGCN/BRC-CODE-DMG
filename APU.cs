@@ -28,6 +28,7 @@ public sealed class APU
     private float hpPrevInR;
     private float hpPrevOutR;
 
+    // Keep this gentle; too aggressive makes DMG audio thin and scratchy.
     private const float HighPassAlpha = 0.9992f;
 
     private bool enabled = true;
@@ -50,45 +51,39 @@ public sealed class APU
 
     public void Step(int tCycles)
     {
+        double cyclesPerSample = (double)CpuClock / sampleRate;
+
         if (!enabled)
         {
             sampleCycleCounter += tCycles;
-            double cps = (double)CpuClock / sampleRate;
-
-            while (sampleCycleCounter >= cps)
+            while (sampleCycleCounter >= cyclesPerSample)
             {
-                sampleCycleCounter -= cps;
+                sampleCycleCounter -= cyclesPerSample;
                 PushStereoSample(0f, 0f);
             }
-
             return;
         }
 
         if ((mmu.NR52 & 0x80) == 0)
         {
             sampleCycleCounter += tCycles;
-            double cyclesPerSample = (double)CpuClock / sampleRate;
-
             while (sampleCycleCounter >= cyclesPerSample)
             {
                 sampleCycleCounter -= cyclesPerSample;
                 PushStereoSample(0f, 0f);
             }
-
             return;
         }
 
         ch1.StepTimer(tCycles);
         ch2.StepTimer(tCycles);
-        ch3.StepTimer(tCycles, mmu);
+        ch3.StepTimer(tCycles);
         ch4.StepTimer(tCycles);
 
         sampleCycleCounter += tCycles;
-        double cyclesPerSampleActive = (double)CpuClock / sampleRate;
-
-        while (sampleCycleCounter >= cyclesPerSampleActive)
+        while (sampleCycleCounter >= cyclesPerSample)
         {
-            sampleCycleCounter -= cyclesPerSampleActive;
+            sampleCycleCounter -= cyclesPerSample;
             MixAndPushSample();
         }
     }
@@ -100,6 +95,7 @@ public sealed class APU
 
         frameSequencerStep = (frameSequencerStep + 1) & 7;
 
+        // 256 Hz: length
         if ((frameSequencerStep & 1) == 0)
         {
             ch1.ClockLength();
@@ -108,11 +104,13 @@ public sealed class APU
             ch4.ClockLength();
         }
 
+        // 128 Hz: sweep
         if (frameSequencerStep == 2 || frameSequencerStep == 6)
         {
             ch1.ClockSweep();
         }
 
+        // 64 Hz: envelope
         if (frameSequencerStep == 7)
         {
             ch1.ClockEnvelope();
@@ -177,8 +175,18 @@ public sealed class APU
 
         if (!apuOn)
         {
+            // Wave RAM is still accessible while powered off.
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
+
+            // On DMG, length registers can still be written while off.
+            switch (address)
+            {
+                case 0xFF11: ch1.WriteNR11(value); break;
+                case 0xFF16: ch2.WriteNR11(value); break;
+                case 0xFF1B: ch3.WriteNR31(value); break;
+                case 0xFF20: ch4.WriteNR41(value); break;
+            }
             return;
         }
 
@@ -218,10 +226,10 @@ public sealed class APU
 
     private void WriteNR52(byte value)
     {
-        bool enable = (value & 0x80) != 0;
-        bool wasEnabled = (mmu.NR52 & 0x80) != 0;
+        bool newEnabled = (value & 0x80) != 0;
+        bool oldEnabled = (mmu.NR52 & 0x80) != 0;
 
-        if (!enable)
+        if (!newEnabled)
         {
             mmu.NR52 = 0x00;
             mmu.NR50 = 0x00;
@@ -233,19 +241,21 @@ public sealed class APU
             ch3.PowerOff();
             ch4.PowerOff();
         }
-        else if (!wasEnabled)
+        else if (!oldEnabled)
         {
             mmu.NR52 = 0x80;
             frameSequencerStep = 0;
+
             ch1.ResetDutyStep();
             ch2.ResetDutyStep();
-            ch3.Reset();
+            ch3.ResetAfterPowerOn();
             ch4.Reset();
         }
     }
 
     private static float DigitalToAnalog(int digital)
     {
+        // 0 => +1, 15 => -1
         return 1.0f - (digital / 7.5f);
     }
 
@@ -334,7 +344,6 @@ public sealed class APU
     {
         writer.Write(frameSequencerStep);
         writer.Write(sampleCycleCounter);
-        writer.Write(sampleRate);
 
         writer.Write(mmu.NR50);
         writer.Write(mmu.NR51);
@@ -350,8 +359,6 @@ public sealed class APU
     {
         frameSequencerStep = reader.ReadInt32();
         sampleCycleCounter = reader.ReadDouble();
-
-        _ = reader.ReadInt32();
 
         mmu.NR50 = reader.ReadByte();
         mmu.NR51 = reader.ReadByte();

@@ -28,6 +28,7 @@ public sealed class SquareChannel
     private int sweepTimer;
     private int shadowFrequency;
     private bool sweepEnabled;
+    private bool sweepNegateUsed;
 
     public bool DacEnabled => (NR12 & 0xF8) != 0;
 
@@ -49,6 +50,7 @@ public sealed class SquareChannel
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
+        sweepNegateUsed = false;
     }
 
     public void ResetDutyStep()
@@ -58,8 +60,17 @@ public sealed class SquareChannel
 
     public void WriteNR10(byte value)
     {
-        if (hasSweep)
-            NR10 = value;
+        if (!hasSweep)
+            return;
+
+        bool oldNegate = (NR10 & 0x08) != 0;
+        bool newNegate = (value & 0x08) != 0;
+
+        // Obscure but documented sweep quirk.
+        if (oldNegate && !newNegate && sweepNegateUsed)
+            Enabled = false;
+
+        NR10 = value;
     }
 
     public void WriteNR11(byte value)
@@ -131,7 +142,7 @@ public sealed class SquareChannel
         if (envelopeTimer > 0)
             return;
 
-        envelopeTimer = pace == 0 ? 8 : pace;
+        envelopeTimer = pace;
 
         bool increase = (NR12 & 0x08) != 0;
         if (increase)
@@ -152,14 +163,15 @@ public sealed class SquareChannel
             return;
 
         int pace = (NR10 >> 4) & 0x07;
-        if (pace == 0)
-            return;
 
         sweepTimer--;
         if (sweepTimer > 0)
             return;
 
-        sweepTimer = pace == 0 ? 8 : pace;
+        sweepTimer = (pace == 0) ? 8 : pace;
+
+        if (pace == 0)
+            return;
 
         int newFreq = CalculateSweepFrequency();
         if (newFreq > 2047)
@@ -184,20 +196,20 @@ public sealed class SquareChannel
     {
         int delta = shadowFrequency >> (NR10 & 0x07);
         bool negate = (NR10 & 0x08) != 0;
+
+        if (negate)
+            sweepNegateUsed = true;
+
         return negate ? shadowFrequency - delta : shadowFrequency + delta;
     }
 
     public int GetDigitalOutput()
     {
-        if (!Enabled)
-            return 0;
-
-        if (!DacEnabled)
+        if (!Enabled || !DacEnabled)
             return 0;
 
         int duty = (NR11 >> 6) & 0x03;
         int bit = DutyTable[duty][dutyStep];
-
         return bit != 0 ? volume : 0;
     }
 
@@ -210,7 +222,6 @@ public sealed class SquareChannel
         }
 
         Enabled = true;
-
         if (lengthCounter == 0)
             lengthCounter = 64;
 
@@ -224,9 +235,11 @@ public sealed class SquareChannel
         if (hasSweep)
         {
             shadowFrequency = GetFrequency();
+
             int pace = (NR10 >> 4) & 0x07;
-            sweepTimer = pace == 0 ? 8 : pace;
+            sweepTimer = (pace == 0) ? 8 : pace;
             sweepEnabled = pace != 0 || (NR10 & 0x07) != 0;
+            sweepNegateUsed = false;
 
             if ((NR10 & 0x07) != 0 && CalculateSweepFrequency() > 2047)
                 Enabled = false;
@@ -254,6 +267,7 @@ public sealed class SquareChannel
         writer.Write(sweepTimer);
         writer.Write(shadowFrequency);
         writer.Write(sweepEnabled);
+        writer.Write(sweepNegateUsed);
     }
 
     public void LoadState(BinaryReader reader)
@@ -272,5 +286,6 @@ public sealed class SquareChannel
         sweepTimer = reader.ReadInt32();
         shadowFrequency = reader.ReadInt32();
         sweepEnabled = reader.ReadBoolean();
+        sweepNegateUsed = reader.ReadBoolean();
     }
 }

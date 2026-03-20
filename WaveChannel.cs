@@ -27,9 +27,17 @@ public sealed class WaveChannel
         lengthCounter = 0;
         sampleIndex = 0;
         sampleBuffer = 0;
-
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = 0;
+    }
+
+    public void ResetAfterPowerOn()
+    {
+        Enabled = false;
+        timer = 0;
+        lengthCounter = 0;
+        sampleIndex = 0;
+        sampleBuffer = 0;
     }
 
     public void Reset()
@@ -86,13 +94,12 @@ public sealed class WaveChannel
         return 0xFF;
     }
 
-    public void StepTimer(int tCycles, MMU mmu)
+    public void StepTimer(int tCycles)
     {
         if (!Enabled)
             return;
 
         timer -= tCycles;
-
         while (timer <= 0)
         {
             timer += (2048 - GetFrequency()) * 2;
@@ -124,12 +131,11 @@ public sealed class WaveChannel
             return 0;
 
         int sample = sampleBuffer;
-
         switch (volumeCode)
         {
-            case 1: break;      // 100%
-            case 2: sample >>= 1; break; // 50%
-            case 3: sample >>= 2; break; // 25%
+            case 1: break;
+            case 2: sample >>= 1; break;
+            case 3: sample >>= 2; break;
         }
 
         return sample & 0x0F;
@@ -144,17 +150,13 @@ public sealed class WaveChannel
         }
 
         Enabled = true;
-
         if (lengthCounter == 0)
             lengthCounter = 256;
 
         timer = (2048 - GetFrequency()) * 2;
 
-        // Common-behavior approximation.
-        // Pan Docs notes CH3 trigger quirks on real hardware,
-        // but this is much closer than the old stub.
+        // Documented behavior: position resets to 0, but sample buffer is not refilled.
         sampleIndex = 0;
-        sampleBuffer = ReadSampleNibble(sampleIndex);
     }
 
     private int GetFrequency()

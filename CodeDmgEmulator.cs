@@ -44,7 +44,8 @@ namespace BRCCodeDmg
             Cpu = new CPU(Mmu);
             Ppu = new PPU(Mmu);
             Joypad = new Joypad(Mmu);
-            Apu = new APU(Mmu, AudioSettings.outputSampleRate);
+            //Apu = new APU(Mmu, AudioSettings.outputSampleRate);
+            Apu = new APU(Mmu, UnityEngine.AudioSettings.outputSampleRate);
             Timer = new Timer(Mmu, Apu);
 
             Mmu.Apu = Apu;

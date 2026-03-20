@@ -73,7 +73,6 @@ public sealed class NoiseChannel
             return;
 
         timer -= tCycles;
-
         while (timer <= 0)
         {
             timer += period;
@@ -121,11 +120,13 @@ public sealed class NoiseChannel
         bool increase = (NR42 & 0x08) != 0;
         if (increase)
         {
-            if (volume < 15) volume++;
+            if (volume < 15)
+                volume++;
         }
         else
         {
-            if (volume > 0) volume--;
+            if (volume > 0)
+                volume--;
         }
     }
 
@@ -134,7 +135,6 @@ public sealed class NoiseChannel
         if (!Enabled || !DacEnabled)
             return 0;
 
-        // Hardware output is 0 or current envelope volume
         return (((~lfsr) & 1) != 0) ? volume : 0;
     }
 
@@ -147,7 +147,6 @@ public sealed class NoiseChannel
         }
 
         Enabled = true;
-
         if (lengthCounter == 0)
             lengthCounter = 64;
 
@@ -165,11 +164,23 @@ public sealed class NoiseChannel
         int divisorCode = NR43 & 0x07;
         int shift = (NR43 >> 4) & 0x0F;
 
-        // Pan Docs: shift 14 or 15 => no clocks
         if (shift >= 14)
             return int.MaxValue;
 
-        int divisor = divisorCode == 0 ? 8 : divisorCode * 16;
+        int divisor;
+        switch (divisorCode)
+        {
+            case 0: divisor = 8; break;
+            case 1: divisor = 16; break;
+            case 2: divisor = 32; break;
+            case 3: divisor = 48; break;
+            case 4: divisor = 64; break;
+            case 5: divisor = 80; break;
+            case 6: divisor = 96; break;
+            case 7: divisor = 112; break;
+            default: divisor = 8; break;
+        }
+
         return divisor << shift;
     }
 
