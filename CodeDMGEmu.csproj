@@ -1,0 +1,106 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net46</TargetFramework>
+		<LangVersion>latest</LangVersion>
+		<AssemblyName>CodeDMGEmu</AssemblyName>
+		<RootNamespace>BRCCodeDmg</RootNamespace>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<Nullable>disable</Nullable>
+
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<BRCPath>H:\SteamLibrary\steamapps\common\BombRushCyberfunk</BRCPath>
+		<ManagedPath>$(BRCPath)\Bomb Rush Cyberfunk_Data\Managed</ManagedPath>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Reference Include="Assembly-CSharp">
+			<HintPath>$(ManagedPath)\Assembly-CSharp.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<!-- Important: keep the base UnityEngine reference -->
+		<Reference Include="UnityEngine">
+			<HintPath>$(ManagedPath)\UnityEngine.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.CoreModule">
+			<HintPath>$(ManagedPath)\UnityEngine.CoreModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.InputLegacyModule">
+			<HintPath>$(ManagedPath)\UnityEngine.InputLegacyModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.AudioModule">
+			<HintPath>$(ManagedPath)\UnityEngine.AudioModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.PhysicsModule">
+			<HintPath>$(ManagedPath)\UnityEngine.PhysicsModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.UIModule">
+			<HintPath>$(ManagedPath)\UnityEngine.UIModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.UI">
+			<HintPath>$(ManagedPath)\UnityEngine.UI.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="Unity.TextMeshPro">
+			<HintPath>$(ManagedPath)\Unity.TextMeshPro.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.UnityWebRequestModule">
+			<HintPath>$(ManagedPath)\UnityEngine.UnityWebRequestModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="BepInEx">
+			<HintPath>Libraries\BepInEx.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="0Harmony">
+			<HintPath>Libraries\0Harmony.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="CommonAPI">
+			<HintPath>Libraries\CommonAPI.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<!-- Only keep these if you truly use DOTween in your own code -->
+		<Reference Include="DOTween">
+			<HintPath>Libraries\DOTween.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="DOTween46">
+			<HintPath>Libraries\DOTween46.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+
+	<!-- Prevent the vendored CommonAPI source folder from compiling -->
+	<ItemGroup>
+		<Compile Remove="libs\BRC-CommonAPI\**\*.cs" />
+		<EmbeddedResource Remove="libs\BRC-CommonAPI\**\*" />
+		<None Remove="libs\BRC-CommonAPI\**\*" />
+	</ItemGroup>
+
+</Project>
