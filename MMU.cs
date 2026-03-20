@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+
 public class MMU
 {
     private byte[] rom; //ROM
@@ -33,17 +34,24 @@ public class MMU
     public byte SCY; //0xFF42
     public byte SCX; //0xFF43
     public byte LY; //0xFF44
-    public byte LYC; //0xFF54
+    public byte LYC; //0xFF45
     public byte BGP; //0xFF47
     public byte OBP0; //0xFF48
     public byte OBP1; //0xFF49
     public byte WY; //0xFF4A
     public byte WX; //0xFF4B
 
+    public byte NR50; //0xFF24
+    public byte NR51; //0xFF25
+    public byte NR52; //0xFF26
+
     public byte joypadState = 0xFF; //Raw inputs
 
     public byte[] ram; //64 KB RAM
     public bool mode;
+
+    public APU Apu;
+    public Timer Timer;
 
     public MMU(byte[] gameRom, byte[] bootRomData, bool mode)
     {
@@ -103,6 +111,7 @@ public class MMU
         }
         return 0xFF;
     }
+
     public void Write(ushort address, byte value)
     {
         if (mode == false)
@@ -119,6 +128,7 @@ public class MMU
     {
         ram[address] = value;
     }
+
     public byte Read2(ushort address)
     {
         return ram[address];
@@ -139,18 +149,52 @@ public class MMU
         switch (address)
         {
             case 0xFF00:
-                //if action or direction buttons are selected
+                // if action or direction buttons are selected
                 if ((JOYP & 0x10) == 0)
-                { //Action buttons selected
+                { // Action buttons selected
                     return (byte)((joypadState >> 4) | 0x20);
                 }
                 else if ((JOYP & 0x20) == 0)
-                { //Direction buttons selected
+                { // Direction buttons selected
                     return (byte)((joypadState & 0x0F) | 0x10);
                 }
                 return (byte)(JOYP | 0xFF);
+
             case 0xFF04:
                 return DIV;
+            case 0xFF05:
+                return TIMA;
+            case 0xFF06:
+                return TMA;
+            case 0xFF07:
+                return TAC;
+
+            case 0xFF0F:
+                return IF;
+
+            case 0xFF10:
+            case 0xFF11:
+            case 0xFF12:
+            case 0xFF13:
+            case 0xFF14:
+            case 0xFF16:
+            case 0xFF17:
+            case 0xFF18:
+            case 0xFF19:
+            case 0xFF1A:
+            case 0xFF1B:
+            case 0xFF1C:
+            case 0xFF1D:
+            case 0xFF1E:
+            case 0xFF20:
+            case 0xFF21:
+            case 0xFF22:
+            case 0xFF23:
+            case 0xFF24:
+            case 0xFF25:
+            case 0xFF26:
+                return Apu != null ? Apu.ReadRegister(address) : io[address - 0xFF00];
+
             case 0xFF40:
                 return LCDC;
             case 0xFF41:
@@ -173,17 +217,16 @@ public class MMU
                 return WY;
             case 0xFF4B:
                 return WX;
-            case 0xFF0F:
-                return IF;
+
             case 0xFFFF:
                 return IE;
         }
 
-        /*
-        if (address < ROM_SIZE) {
-            return rom[address];
+        if (address >= 0xFF30 && address <= 0xFF3F)
+        {
+            return Apu != null ? Apu.ReadRegister(address) : io[address - 0xFF00];
         }
-        */
+
         if (address >= 0xC000 && address < 0xE000)
         {
             return wram[address - 0xC000];
@@ -204,6 +247,7 @@ public class MMU
         {
             return io[address - 0xFF00]; //Mostly as a fallback
         }
+
         return 0xFF; //Default values of unknown reads
     }
 
@@ -227,9 +271,56 @@ public class MMU
             case 0xFF00:
                 JOYP = (byte)(value & 0x30);
                 break;
+
             case 0xFF04:
-                DIV = value;
+                if (Timer != null)
+                    Timer.ResetDiv();
+                else
+                    DIV = 0;
                 break;
+
+            case 0xFF05:
+                TIMA = value;
+                break;
+
+            case 0xFF06:
+                TMA = value;
+                break;
+
+            case 0xFF07:
+                TAC = (byte)(value & 0x07);
+                break;
+
+            case 0xFF0F:
+                IF = value;
+                break;
+
+            case 0xFF10:
+            case 0xFF11:
+            case 0xFF12:
+            case 0xFF13:
+            case 0xFF14:
+            case 0xFF16:
+            case 0xFF17:
+            case 0xFF18:
+            case 0xFF19:
+            case 0xFF1A:
+            case 0xFF1B:
+            case 0xFF1C:
+            case 0xFF1D:
+            case 0xFF1E:
+            case 0xFF20:
+            case 0xFF21:
+            case 0xFF22:
+            case 0xFF23:
+            case 0xFF24:
+            case 0xFF25:
+            case 0xFF26:
+                if (Apu != null)
+                    Apu.WriteRegister(address, value);
+                io[address - 0xFF00] = value;
+                return;
+
             case 0xFF40:
                 LCDC = value;
                 if ((value & 0x80) == 0)
@@ -238,6 +329,27 @@ public class MMU
                     LY = 0x00;
                 }
                 break;
+
+            case 0xFF41:
+                STAT = value;
+                break;
+
+            case 0xFF42:
+                SCY = value;
+                break;
+
+            case 0xFF43:
+                SCX = value;
+                break;
+
+            case 0xFF44:
+                LY = value;
+                break;
+
+            case 0xFF45:
+                LYC = value;
+                break;
+
             case 0xFF46: //DMA
                 ushort sourceAddress = (ushort)(value << 8);
                 for (ushort i = 0; i < 0xA0; i++)
@@ -245,42 +357,38 @@ public class MMU
                     Write((ushort)(0xFE00 + i), Read((ushort)(sourceAddress + i)));
                 }
                 break;
-            case 0xFF41:
-                STAT = value;
-                break;
-            case 0xFF42:
-                SCY = value;
-                break;
-            case 0xFF43:
-                SCX = value;
-                break;
-            case 0xFF44:
-                LY = value;
-                break;
-            case 0xFF45:
-                LYC = value;
-                break;
+
             case 0xFF47:
                 BGP = value;
                 break;
+
             case 0xFF48:
                 OBP0 = value;
                 break;
+
             case 0xFF49:
                 OBP1 = value;
                 break;
+
             case 0xFF4A:
                 WY = value;
                 break;
+
             case 0xFF4B:
                 WX = value;
                 break;
-            case 0xFF0F:
-                IF = value;
-                break;
+
             case 0xFFFF:
                 IE = value;
                 break;
+        }
+
+        if (address >= 0xFF30 && address <= 0xFF3F)
+        {
+            if (Apu != null)
+                Apu.WriteRegister(address, value);
+            io[address - 0xFF00] = value;
+            return;
         }
 
         if (address >= 0xC000 && address < 0xE000)
@@ -305,7 +413,7 @@ public class MMU
         }
         else if (address == 0xFFFF)
         {
-            //IE accounted for in switch statement, else if here to prevement "OUT OF RANGE" message 
+            // IE accounted for in switch statement, else if here to prevent "OUT OF RANGE" message
         }
         else
         {
@@ -364,6 +472,9 @@ public class MMU
         writer.Write(OBP1);
         writer.Write(WY);
         writer.Write(WX);
+        writer.Write(NR50);
+        writer.Write(NR51);
+        writer.Write(NR52);
         writer.Write(joypadState);
 
         mbc.SaveState(writer);
@@ -419,9 +530,11 @@ public class MMU
         OBP1 = reader.ReadByte();
         WY = reader.ReadByte();
         WX = reader.ReadByte();
+        NR50 = reader.ReadByte();
+        NR51 = reader.ReadByte();
+        NR52 = reader.ReadByte();
         joypadState = reader.ReadByte();
 
         mbc.LoadState(reader);
     }
-
 }

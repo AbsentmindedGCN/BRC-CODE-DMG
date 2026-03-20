@@ -14,6 +14,7 @@ namespace BRCCodeDmg
 
         private CodeDmgEmulator _emulator;
         private CodeDmgRenderer _renderer;
+        private CodeDmgAudioDriver _audioDriver;
 
         public override bool Available => true;
 
@@ -51,6 +52,12 @@ namespace BRCCodeDmg
             _renderer = new CodeDmgRenderer(this);
             _renderer.Build();
 
+            _audioDriver = gameObject.GetComponent<CodeDmgAudioDriver>();
+            if (_audioDriver == null)
+                _audioDriver = gameObject.AddComponent<CodeDmgAudioDriver>();
+
+            _audioDriver.SetMuted(true);
+
             TryBootEmulator();
             RenderNow();
         }
@@ -71,6 +78,9 @@ namespace BRCCodeDmg
                 _renderer.Build();
             }
 
+            if (_audioDriver != null)
+                _audioDriver.SetMuted(false);
+
             if (_emulator == null)
                 TryBootEmulator();
 
@@ -89,6 +99,9 @@ namespace BRCCodeDmg
         public override void OnAppDisable()
         {
             base.OnAppDisable();
+
+            if (_audioDriver != null)
+                _audioDriver.SetMuted(true);
 
             CodeDmgState.AppActive = false;
             GBEmuCurrentState.AppActive = false;
@@ -142,6 +155,8 @@ namespace BRCCodeDmg
             }
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(_emulator);
         }
 
         private string GetConfiguredRomPath()
@@ -239,6 +254,9 @@ namespace BRCCodeDmg
 
                 loaded.DeserializeState(stateData);
                 _emulator = loaded;
+
+                if (_audioDriver != null)
+                    _audioDriver.SetEmulator(_emulator);
             }
             catch (Exception ex)
             {
@@ -258,6 +276,8 @@ namespace BRCCodeDmg
                 }
 
                 TryBootEmulator();
+                if (_audioDriver != null)
+                    _audioDriver.SetEmulator(_emulator);
             }
         }
 

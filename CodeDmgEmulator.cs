@@ -6,11 +6,12 @@ namespace BRCCodeDmg
     public sealed class CodeDmgEmulator
     {
         private const int CyclesPerFrame = 70224;
-        private const int SaveStateVersion = 1;
+        private const int SaveStateVersion = 2;
 
         private MMU Mmu { get; }
         private CPU Cpu { get; }
         public PPU Ppu { get; }
+        public APU Apu { get; }
         private Joypad Joypad { get; }
         private Timer Timer { get; }
 
@@ -40,14 +41,26 @@ namespace BRCCodeDmg
             Cpu = new CPU(Mmu);
             Ppu = new PPU(Mmu);
             Joypad = new Joypad(Mmu);
-            Timer = new Timer(Mmu);
+            Apu = new APU(Mmu);
+            Timer = new Timer(Mmu, Apu);
+
+            Mmu.Apu = Apu;
+            Mmu.Timer = Timer;
 
             if (!File.Exists(bootRomPath))
+            {
                 Cpu.Reset();
+
+                // Approximate post-boot DMG audio defaults
+                Mmu.NR52 = 0x80; // APU enabled
+                Mmu.NR50 = 0x77; // full left/right master volume
+                Mmu.NR51 = 0xF3; // common DMG routing default
+            }
 
             Mmu.Load(_savePath);
         }
 
+        /*
         public void StepFrame()
         {
             int cycles = 0;
@@ -59,6 +72,25 @@ namespace BRCCodeDmg
 
                 Ppu.Step(executed);
                 Timer.Step(executed);
+                Apu.Step(executed);
+            }
+        }
+        */
+
+        public void StepFrame()
+        {
+            int cycles = 0;
+
+            while (cycles < CyclesPerFrame)
+            {
+                int executed = Cpu.ExecuteInstruction();
+                int tCycles = executed * 4;
+
+                cycles += tCycles;
+
+                Ppu.Step(tCycles);
+                Timer.Step(tCycles);
+                Apu.Step(tCycles);
             }
         }
 
@@ -86,6 +118,7 @@ namespace BRCCodeDmg
                 Ppu.SaveState(writer);
                 Joypad.SaveState(writer);
                 Timer.SaveState(writer);
+                Apu.SaveState(writer);
 
                 writer.Flush();
                 return ms.ToArray();
@@ -112,6 +145,7 @@ namespace BRCCodeDmg
                 Ppu.LoadState(reader);
                 Joypad.LoadState(reader);
                 Timer.LoadState(reader);
+                Apu.LoadState(reader);
             }
         }
     }
