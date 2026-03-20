@@ -14,8 +14,8 @@ public sealed class WaveChannel
 
     private int timer;
     private int lengthCounter;
-    private int sampleIndex;   // 0..31
-    private int sampleBuffer;  // current latched 4-bit sample
+    private int sampleIndex;   // 0..31, points to most recently fetched nibble
+    private int sampleBuffer;  // currently latched 4-bit sample
 
     public bool DacEnabled => (NR30 & 0x80) != 0;
 
@@ -38,7 +38,7 @@ public sealed class WaveChannel
         timer = 0;
         lengthCounter = 0;
         sampleIndex = 0;
-        sampleBuffer = 0;
+        sampleBuffer = 0; // buffer cleared only when powering APU on
     }
 
     public void Reset()
@@ -65,6 +65,8 @@ public sealed class WaveChannel
 
     public void WriteNR32(byte value)
     {
+        // Output level control only changes how the buffered digital value is shifted.
+        // It must not touch timer, position, or buffer.
         NR32 = value;
     }
 
@@ -93,7 +95,6 @@ public sealed class WaveChannel
         int index = address - 0xFF30;
         if ((uint)index < 16)
             return waveRam[index];
-
         return 0xFF;
     }
 
@@ -108,6 +109,8 @@ public sealed class WaveChannel
         {
             timer += (2048 - GetFrequency()) * 2;
 
+            // Pan Docs behavior:
+            // sample index increments, then the corresponding nibble is fetched.
             sampleIndex = (sampleIndex + 1) & 31;
             sampleBuffer = ReadSampleNibble(sampleIndex);
         }
@@ -132,24 +135,22 @@ public sealed class WaveChannel
             return 0;
 
         int volumeCode = (NR32 >> 5) & 0x03;
-        if (volumeCode == 0)
-            return 0;
+        int sample = sampleBuffer & 0x0F;
 
-        int sample = sampleBuffer;
-
+        // Output level shifts the digital sample, not the analog output.
         switch (volumeCode)
         {
+            case 0:
+                return 0;            // mute
             case 1:
-                break;          // 100%
+                return sample;       // 100%
             case 2:
-                sample >>= 1;   // 50%
-                break;
+                return sample >> 1;  // 50%
             case 3:
-                sample >>= 2;   // 25%
-                break;
+                return sample >> 2;  // 25%
+            default:
+                return 0;
         }
-
-        return sample & 0x0F;
     }
 
     private void Trigger()
@@ -165,14 +166,14 @@ public sealed class WaveChannel
         if (lengthCounter == 0)
             lengthCounter = 256;
 
-        // Restart timer
+        // Restart timer.
         timer = (2048 - GetFrequency()) * 2;
 
-        // Hardware behavior:
-        // - reset position to 0
-        // - do NOT refill sample buffer
-        // - because the next sample fetch happens on the next timer tick,
-        //   the old buffered sample keeps playing briefly and sample 0 is skipped
+        // Pan Docs / gbdev wiki behavior:
+        // - sample index resets to 0
+        // - sample buffer is NOT refilled on trigger
+        // - previous buffered sample continues briefly
+        // - next fetched sample is sample #1, so sample #0 is skipped until wraparound
         sampleIndex = 0;
     }
 

@@ -23,7 +23,7 @@ public sealed class APU
     private int sampleWriteIndex;
     private int sampleCount;
 
-    // DMG-style HPF capacitor model
+    // DMG capacitor HPF
     private double capacitorL;
     private double capacitorR;
     private readonly double hpfChargeFactor;
@@ -40,8 +40,7 @@ public sealed class APU
         ch3 = new WaveChannel();
         ch4 = new NoiseChannel();
 
-        // Pan Docs:
-        // chargeFactor = 0.999958^(4194304 / rate) for DMG
+        // Pan Docs DMG factor adjusted to output sample rate
         hpfChargeFactor = Math.Pow(0.999958, (double)CpuClock / this.sampleRate);
     }
 
@@ -96,7 +95,6 @@ public sealed class APU
 
         frameSequencerStep = (frameSequencerStep + 1) & 7;
 
-        // 256 Hz: length
         if ((frameSequencerStep & 1) == 0)
         {
             ch1.ClockLength();
@@ -105,13 +103,11 @@ public sealed class APU
             ch4.ClockLength();
         }
 
-        // 128 Hz: CH1 sweep
         if (frameSequencerStep == 2 || frameSequencerStep == 6)
         {
             ch1.ClockSweep();
         }
 
-        // 64 Hz: envelope
         if (frameSequencerStep == 7)
         {
             ch1.ClockEnvelope();
@@ -176,11 +172,9 @@ public sealed class APU
 
         if (!apuOn)
         {
-            // Wave RAM is accessible while off
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
 
-            // Length regs still writable while off
             switch (address)
             {
                 case 0xFF11: ch1.WriteNR11(value); break;
@@ -263,14 +257,10 @@ public sealed class APU
 
     private static float DigitalToAnalog(int digital)
     {
-        // DMG DAC slope is negative:
-        // digital 0 -> analog +1
-        // digital 15 -> analog -1
+        // Pan Docs: digital 0 -> analog +1, digital 15 -> analog -1
         return 1.0f - (digital / 7.5f);
     }
 
-    // More accurate than "enabled-only":
-    // if DAC is on, a disabled channel still outputs digital 0 -> analog +1.
     private float Channel1Analog() => ch1.DacEnabled ? DigitalToAnalog(ch1.GetDigitalOutput()) : 0f;
     private float Channel2Analog() => ch2.DacEnabled ? DigitalToAnalog(ch2.GetDigitalOutput()) : 0f;
     private float Channel3Analog() => ch3.DacEnabled ? DigitalToAnalog(ch3.GetDigitalOutput()) : 0f;
@@ -278,16 +268,16 @@ public sealed class APU
 
     private void MixAndPushSample()
     {
-        float s1 = Channel1Analog();
-        float s2 = Channel2Analog();
-        float s3 = Channel3Analog();
-        float s4 = Channel4Analog();
-
         double left = 0.0;
         double right = 0.0;
 
         bool leftAnyDac = false;
         bool rightAnyDac = false;
+
+        float s1 = Channel1Analog();
+        float s2 = Channel2Analog();
+        float s3 = Channel3Analog();
+        float s4 = Channel4Analog();
 
         if ((mmu.NR51 & 0x10) != 0) { left += s1; leftAnyDac |= ch1.DacEnabled; }
         if ((mmu.NR51 & 0x20) != 0) { left += s2; leftAnyDac |= ch2.DacEnabled; }
@@ -299,7 +289,7 @@ public sealed class APU
         if ((mmu.NR51 & 0x04) != 0) { right += s3; rightAnyDac |= ch3.DacEnabled; }
         if ((mmu.NR51 & 0x08) != 0) { right += s4; rightAnyDac |= ch4.DacEnabled; }
 
-        // NR50 scales by (vol+1); normalize for Unity.
+        // Analog outputs are sums of routed channels, then master volume scales them.
         double leftVol = (((mmu.NR50 >> 4) & 0x07) + 1) / 8.0;
         double rightVol = ((mmu.NR50 & 0x07) + 1) / 8.0;
 
