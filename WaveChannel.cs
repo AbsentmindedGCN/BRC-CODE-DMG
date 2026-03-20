@@ -15,7 +15,7 @@ public sealed class WaveChannel
     private int timer;
     private int lengthCounter;
     private int sampleIndex;   // 0..31
-    private int sampleBuffer;  // current 4-bit sample
+    private int sampleBuffer;  // current latched 4-bit sample
 
     public bool DacEnabled => (NR30 & 0x80) != 0;
 
@@ -27,6 +27,7 @@ public sealed class WaveChannel
         lengthCounter = 0;
         sampleIndex = 0;
         sampleBuffer = 0;
+
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = 0;
     }
@@ -75,6 +76,7 @@ public sealed class WaveChannel
     public void WriteNR34(byte value)
     {
         NR34 = value;
+
         if ((value & 0x80) != 0)
             Trigger();
     }
@@ -91,6 +93,7 @@ public sealed class WaveChannel
         int index = address - 0xFF30;
         if ((uint)index < 16)
             return waveRam[index];
+
         return 0xFF;
     }
 
@@ -100,9 +103,11 @@ public sealed class WaveChannel
             return;
 
         timer -= tCycles;
+
         while (timer <= 0)
         {
             timer += (2048 - GetFrequency()) * 2;
+
             sampleIndex = (sampleIndex + 1) & 31;
             sampleBuffer = ReadSampleNibble(sampleIndex);
         }
@@ -131,11 +136,17 @@ public sealed class WaveChannel
             return 0;
 
         int sample = sampleBuffer;
+
         switch (volumeCode)
         {
-            case 1: break;
-            case 2: sample >>= 1; break;
-            case 3: sample >>= 2; break;
+            case 1:
+                break;          // 100%
+            case 2:
+                sample >>= 1;   // 50%
+                break;
+            case 3:
+                sample >>= 2;   // 25%
+                break;
         }
 
         return sample & 0x0F;
@@ -150,12 +161,18 @@ public sealed class WaveChannel
         }
 
         Enabled = true;
+
         if (lengthCounter == 0)
             lengthCounter = 256;
 
+        // Restart timer
         timer = (2048 - GetFrequency()) * 2;
 
-        // Documented behavior: position resets to 0, but sample buffer is not refilled.
+        // Hardware behavior:
+        // - reset position to 0
+        // - do NOT refill sample buffer
+        // - because the next sample fetch happens on the next timer tick,
+        //   the old buffered sample keeps playing briefly and sample 0 is skipped
         sampleIndex = 0;
     }
 
@@ -201,6 +218,7 @@ public sealed class WaveChannel
 
         int len = reader.ReadInt32();
         byte[] data = reader.ReadBytes(len);
+
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = i < data.Length ? data[i] : (byte)0;
     }

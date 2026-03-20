@@ -23,13 +23,10 @@ public sealed class APU
     private int sampleWriteIndex;
     private int sampleCount;
 
-    private float hpPrevInL;
-    private float hpPrevOutL;
-    private float hpPrevInR;
-    private float hpPrevOutR;
-
-    // Keep this gentle; too aggressive makes DMG audio thin and scratchy.
-    private const float HighPassAlpha = 0.9992f;
+    // DMG-style HPF capacitor model
+    private double capacitorL;
+    private double capacitorR;
+    private readonly double hpfChargeFactor;
 
     private bool enabled = true;
 
@@ -42,6 +39,10 @@ public sealed class APU
         ch2 = new SquareChannel(false);
         ch3 = new WaveChannel();
         ch4 = new NoiseChannel();
+
+        // Pan Docs:
+        // chargeFactor = 0.999958^(4194304 / rate) for DMG
+        hpfChargeFactor = Math.Pow(0.999958, (double)CpuClock / this.sampleRate);
     }
 
     public void SetEnabled(bool enabled)
@@ -104,7 +105,7 @@ public sealed class APU
             ch4.ClockLength();
         }
 
-        // 128 Hz: sweep
+        // 128 Hz: CH1 sweep
         if (frameSequencerStep == 2 || frameSequencerStep == 6)
         {
             ch1.ClockSweep();
@@ -175,11 +176,11 @@ public sealed class APU
 
         if (!apuOn)
         {
-            // Wave RAM is still accessible while powered off.
+            // Wave RAM is accessible while off
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
 
-            // On DMG, length registers can still be written while off.
+            // Length regs still writable while off
             switch (address)
             {
                 case 0xFF11: ch1.WriteNR11(value); break;
@@ -187,6 +188,7 @@ public sealed class APU
                 case 0xFF1B: ch3.WriteNR31(value); break;
                 case 0xFF20: ch4.WriteNR41(value); break;
             }
+
             return;
         }
 
@@ -240,6 +242,9 @@ public sealed class APU
             ch2.PowerOff();
             ch3.PowerOff();
             ch4.PowerOff();
+
+            capacitorL = 0.0;
+            capacitorR = 0.0;
         }
         else if (!oldEnabled)
         {
@@ -250,15 +255,22 @@ public sealed class APU
             ch2.ResetDutyStep();
             ch3.ResetAfterPowerOn();
             ch4.Reset();
+
+            capacitorL = 0.0;
+            capacitorR = 0.0;
         }
     }
 
     private static float DigitalToAnalog(int digital)
     {
-        // 0 => +1, 15 => -1
+        // DMG DAC slope is negative:
+        // digital 0 -> analog +1
+        // digital 15 -> analog -1
         return 1.0f - (digital / 7.5f);
     }
 
+    // More accurate than "enabled-only":
+    // if DAC is on, a disabled channel still outputs digital 0 -> analog +1.
     private float Channel1Analog() => ch1.DacEnabled ? DigitalToAnalog(ch1.GetDigitalOutput()) : 0f;
     private float Channel2Analog() => ch2.DacEnabled ? DigitalToAnalog(ch2.GetDigitalOutput()) : 0f;
     private float Channel3Analog() => ch3.DacEnabled ? DigitalToAnalog(ch3.GetDigitalOutput()) : 0f;
@@ -271,29 +283,43 @@ public sealed class APU
         float s3 = Channel3Analog();
         float s4 = Channel4Analog();
 
-        float left = 0f;
-        float right = 0f;
+        double left = 0.0;
+        double right = 0.0;
 
-        if ((mmu.NR51 & 0x10) != 0) left += s1;
-        if ((mmu.NR51 & 0x20) != 0) left += s2;
-        if ((mmu.NR51 & 0x40) != 0) left += s3;
-        if ((mmu.NR51 & 0x80) != 0) left += s4;
+        bool leftAnyDac = false;
+        bool rightAnyDac = false;
 
-        if ((mmu.NR51 & 0x01) != 0) right += s1;
-        if ((mmu.NR51 & 0x02) != 0) right += s2;
-        if ((mmu.NR51 & 0x04) != 0) right += s3;
-        if ((mmu.NR51 & 0x08) != 0) right += s4;
+        if ((mmu.NR51 & 0x10) != 0) { left += s1; leftAnyDac |= ch1.DacEnabled; }
+        if ((mmu.NR51 & 0x20) != 0) { left += s2; leftAnyDac |= ch2.DacEnabled; }
+        if ((mmu.NR51 & 0x40) != 0) { left += s3; leftAnyDac |= ch3.DacEnabled; }
+        if ((mmu.NR51 & 0x80) != 0) { left += s4; leftAnyDac |= ch4.DacEnabled; }
 
-        float leftVol = (((mmu.NR50 >> 4) & 0x07) + 1) / 8f;
-        float rightVol = ((mmu.NR50 & 0x07) + 1) / 8f;
+        if ((mmu.NR51 & 0x01) != 0) { right += s1; rightAnyDac |= ch1.DacEnabled; }
+        if ((mmu.NR51 & 0x02) != 0) { right += s2; rightAnyDac |= ch2.DacEnabled; }
+        if ((mmu.NR51 & 0x04) != 0) { right += s3; rightAnyDac |= ch3.DacEnabled; }
+        if ((mmu.NR51 & 0x08) != 0) { right += s4; rightAnyDac |= ch4.DacEnabled; }
 
-        left *= leftVol * 0.25f;
-        right *= rightVol * 0.25f;
+        // NR50 scales by (vol+1); normalize for Unity.
+        double leftVol = (((mmu.NR50 >> 4) & 0x07) + 1) / 8.0;
+        double rightVol = ((mmu.NR50 & 0x07) + 1) / 8.0;
 
-        left = HighPassLeft(left);
-        right = HighPassRight(right);
+        left *= leftVol * 0.25;
+        right *= rightVol * 0.25;
 
-        PushStereoSample(Clamp(left), Clamp(right));
+        left = HighPassDMG(left, ref capacitorL, leftAnyDac);
+        right = HighPassDMG(right, ref capacitorR, rightAnyDac);
+
+        PushStereoSample(Clamp((float)left), Clamp((float)right));
+    }
+
+    private double HighPassDMG(double input, ref double capacitor, bool dacsEnabled)
+    {
+        if (!dacsEnabled)
+            return 0.0;
+
+        double output = input - capacitor;
+        capacitor = input - output * hpfChargeFactor;
+        return output;
     }
 
     private static float Clamp(float v)
@@ -349,6 +375,9 @@ public sealed class APU
         writer.Write(mmu.NR51);
         writer.Write(mmu.NR52);
 
+        writer.Write(capacitorL);
+        writer.Write(capacitorR);
+
         ch1.SaveState(writer);
         ch2.SaveState(writer);
         ch3.SaveState(writer);
@@ -364,6 +393,9 @@ public sealed class APU
         mmu.NR51 = reader.ReadByte();
         mmu.NR52 = reader.ReadByte();
 
+        capacitorL = reader.ReadDouble();
+        capacitorR = reader.ReadDouble();
+
         ch1.LoadState(reader);
         ch2.LoadState(reader);
         ch3.LoadState(reader);
@@ -375,26 +407,5 @@ public sealed class APU
             sampleWriteIndex = 0;
             sampleCount = 0;
         }
-
-        hpPrevInL = 0f;
-        hpPrevOutL = 0f;
-        hpPrevInR = 0f;
-        hpPrevOutR = 0f;
-    }
-
-    private float HighPassLeft(float input)
-    {
-        float output = HighPassAlpha * (hpPrevOutL + input - hpPrevInL);
-        hpPrevInL = input;
-        hpPrevOutL = output;
-        return output;
-    }
-
-    private float HighPassRight(float input)
-    {
-        float output = HighPassAlpha * (hpPrevOutR + input - hpPrevInR);
-        hpPrevInR = input;
-        hpPrevOutR = output;
-        return output;
     }
 }
