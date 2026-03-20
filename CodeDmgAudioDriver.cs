@@ -9,6 +9,8 @@ namespace BRCCodeDmg
         private CodeDmgEmulator _emulator;
         private bool _muted = true;
 
+        private float[] _stereoTemp = new float[0];
+
         private void Awake()
         {
             _audioSource = GetComponent<AudioSource>();
@@ -50,10 +52,33 @@ namespace BRCCodeDmg
             if (_muted || _emulator == null || _emulator.Apu == null || !_emulator.AudioEnabled)
                 return;
 
-            int read = _emulator.Apu.ReadSamples(data, 0, data.Length);
+            if (channels <= 0)
+                return;
 
-            for (int i = read; i < data.Length; i++)
-                data[i] = 0f;
+            int frameCount = data.Length / channels;
+            int stereoSamplesNeeded = frameCount * 2;
+
+            if (_stereoTemp.Length != stereoSamplesNeeded)
+                _stereoTemp = new float[stereoSamplesNeeded];
+
+            for (int i = 0; i < stereoSamplesNeeded; i++)
+                _stereoTemp[i] = 0f;
+
+            int read = _emulator.Apu.ReadSamples(_stereoTemp, 0, stereoSamplesNeeded);
+            int framesRead = read / 2;
+
+            for (int frame = 0; frame < framesRead; frame++)
+            {
+                float left = _stereoTemp[frame * 2];
+                float right = _stereoTemp[frame * 2 + 1];
+
+                // Force mono so hard-panned channels can't disappear
+                float mono = (left + right) * 0.5f;
+
+                int baseIndex = frame * channels;
+                for (int c = 0; c < channels; c++)
+                    data[baseIndex + c] = mono;
+            }
         }
     }
 }

@@ -66,7 +66,6 @@ public sealed class SquareChannel
         bool oldNegate = (NR10 & 0x08) != 0;
         bool newNegate = (value & 0x08) != 0;
 
-        // Obscure but documented sweep quirk.
         if (oldNegate && !newNegate && sweepNegateUsed)
             Enabled = false;
 
@@ -108,17 +107,14 @@ public sealed class SquareChannel
         timer -= tCycles;
         while (timer <= 0)
         {
-            timer += (2048 - GetFrequency()) * 4;
+            timer += GetPeriod();
             dutyStep = (dutyStep + 1) & 7;
         }
     }
 
     public void ClockLength()
     {
-        if (!Enabled)
-            return;
-
-        if ((NR14 & 0x40) == 0)
+        if (!Enabled || (NR14 & 0x40) == 0)
             return;
 
         if (lengthCounter > 0)
@@ -222,15 +218,20 @@ public sealed class SquareChannel
         }
 
         Enabled = true;
+
         if (lengthCounter == 0)
             lengthCounter = 64;
 
-        timer = (2048 - GetFrequency()) * 4;
         volume = (NR12 >> 4) & 0x0F;
 
-        envelopeTimer = NR12 & 0x07;
-        if (envelopeTimer == 0)
-            envelopeTimer = 8;
+        int envPeriod = NR12 & 0x07;
+        envelopeTimer = (envPeriod == 0) ? 8 : envPeriod;
+
+        // Hardware quirk:
+        // trigger resets the frequency timer, but NOT the duty-step counter,
+        // and the low 2 bits of the timer are preserved.
+        int low2 = timer & 0x03;
+        timer = GetPeriod() | low2;
 
         if (hasSweep)
         {
@@ -249,6 +250,11 @@ public sealed class SquareChannel
     private int GetFrequency()
     {
         return ((NR14 & 0x07) << 8) | NR13;
+    }
+
+    private int GetPeriod()
+    {
+        return (2048 - GetFrequency()) * 4;
     }
 
     public void SaveState(BinaryWriter writer)
