@@ -1,4 +1,5 @@
-﻿using TMPro;
+﻿using System;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -52,12 +53,12 @@ namespace BRCCodeDmg
             _fullScreenBlackRect.SetAsFirstSibling();
 
             _fullScreenBlack = blackGo.GetComponent<Image>();
-            _fullScreenBlack.color = Color.black;
+            _fullScreenBlack.color = GetConfiguredBackground();
             _fullScreenBlack.raycastTarget = false;
 
 
             if (_root != null)
-                Object.Destroy(_root);
+                UnityEngine.Object.Destroy(_root);
 
             _root = new GameObject("CodeDmgRoot", typeof(RectTransform));
             _rootRect = _root.GetComponent<RectTransform>();
@@ -102,6 +103,10 @@ namespace BRCCodeDmg
 
         public void Render(CodeDmgEmulator emulator)
         {
+            // Update background colour live so config changes take effect immediately
+            if (_fullScreenBlack != null)
+                _fullScreenBlack.color = GetConfiguredBackground();
+
             if (_missingRomText != null)
                 _missingRomText.enabled = emulator == null;
 
@@ -115,6 +120,38 @@ namespace BRCCodeDmg
             _screenTexture.Apply(false, false);
 
             emulator.Ppu.ClearDirtyFlag();
+        }
+
+        /// <summary>
+        /// Reads BackgroundColor from config and parses it as a hex colour.
+        /// Accepts #RRGGBB and #RRGGBBAA. Falls back to black on any parse error.
+        /// </summary>
+        private static Color GetConfiguredBackground()
+        {
+            string hex = CodeDmgPlugin.ConfigSettings?.BackgroundColor.Value ?? "#000000";
+
+            // Strip leading # if present
+            hex = hex.TrimStart('#').Trim();
+
+            // Pad to at least 6 chars; treat empty/short strings as black
+            if (hex.Length < 6)
+                return Color.black;
+
+            try
+            {
+                byte r = Convert.ToByte(hex.Substring(0, 2), 16);
+                byte g = Convert.ToByte(hex.Substring(2, 2), 16);
+                byte b = Convert.ToByte(hex.Substring(4, 2), 16);
+                byte a = hex.Length >= 8
+                    ? Convert.ToByte(hex.Substring(6, 2), 16)
+                    : (byte)255;
+
+                return new Color32(r, g, b, a);
+            }
+            catch
+            {
+                return Color.black;
+            }
         }
 
         /*

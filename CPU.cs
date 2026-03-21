@@ -21,21 +21,37 @@ class CPU {
         Console.WriteLine("CPU init");
     }
 
-    public void Reset() {
-        A = 0x01;
-        F = 0xB0; //Z=1,N=0,H=1,C=1
-        UpdateFlagsFromF();
-        B = 0x00;
-        C = 0x13;
-        D = 0x00;
-        E = 0xD8;
-        H = 0x01;
-        L = 0x4D;
+    public void Reset(bool isGbc = false) {
+        if (isGbc) {
+            // GBC post-boot register state (A=0x11 is the GBC hardware flag games check)
+            A = 0x11;
+            F = 0x80;
+            UpdateFlagsFromF();
+            B = 0x00;
+            C = 0x00;
+            D = 0xFF;
+            E = 0x56;
+            H = 0x00;
+            L = 0x0D;
+        } else {
+            // DMG post-boot register state
+            A = 0x01;
+            F = 0xB0; //Z=1,N=0,H=1,C=1
+            UpdateFlagsFromF();
+            B = 0x00;
+            C = 0x13;
+            D = 0x00;
+            E = 0xD8;
+            H = 0x01;
+            L = 0x4D;
+        }
         PC = 0x100;
         SP = 0xFFFE;
+        IME = false;
+        halted = false;
 
         mmu.JOYP = 0xCF;
-        mmu.DIV = 0x18;
+        mmu.DIV = isGbc ? (byte)0x00 : (byte)0x18;
         mmu.IF = 0xE1;
         mmu.LCDC = 0x91;
         mmu.STAT = 0x85;
@@ -44,7 +60,7 @@ class CPU {
         mmu.LY = 0x00;
         mmu.LYC = 0x00;
         mmu.BGP = 0xFC;
-        mmu.Write(0xFF50, A);
+        mmu.Write(0xFF50, 0x01); // disable boot ROM
     }
 
     public int HandleInterrupts() {
@@ -2434,6 +2450,18 @@ class CPU {
     }
 
     private int STOP() {
+        // Skip the mandatory 0x00 operand byte
+        PC++;
+
+        // GBC speed switch: if KEY1 bit 0 (prepare) is set, toggle double-speed
+        if (mmu.IsGbc && (mmu.Read(0xFF4D) & 0x01) != 0) {
+            mmu.ExecuteSpeedSwitch();
+            mmu.Timer?.ResetDiv();
+        }
+        // else: normal STOP — low-power mode until joypad interrupt (halted stays true)
+        // The Game Boy wakes from STOP on any joypad button press, which the
+        // existing interrupt handling in HandleInterrupts() already manages.
+
         return 4;
     }
 

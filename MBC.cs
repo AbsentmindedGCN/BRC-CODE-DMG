@@ -17,9 +17,12 @@ class MBC {
 
     public MBC(byte[] romData)
     {
-        romSize = CalculateRomSize(romData[0x0148]);
-        romBankCount = romSize / (16 * 1024);
         rom = romData;
+        romSize = CalculateRomSize(romData[0x0148]);
+
+        // Use the actual file length for bank counting — the header value can
+        // report more banks than are physically present, causing out-of-bounds reads.
+        romBankCount = Math.Max(2, rom.Length / (16 * 1024));
 
         switch (rom[0x0147]) {
             case 0x00:
@@ -292,17 +295,19 @@ class MBC {
 
     public byte Read(ushort address) {
         if (address < 0x4000) {
-            //Fixed ROM Bank 0 (common)
-            return rom[address];
+            // Fixed ROM bank 0
+            return address < rom.Length ? rom[address] : (byte)0xFF;
         } else if (address < 0x8000) {
-            //Switchable ROM Bank (common)
+            // Switchable ROM bank — clamp to actual file length
             int bankOffset = (romBank % romBankCount) * 0x4000;
-            return rom[bankOffset + (address - 0x4000)];
+            int offset = bankOffset + (address - 0x4000);
+            return offset < rom.Length ? rom[offset] : (byte)0xFF;
         } else if (address >= 0xA000 && address < 0xC000) {
-            //RAM Access (common)
-            if (ramEnabled) {
+            // Cartridge RAM
+            if (ramEnabled && ramBankCount > 0) {
                 int ramOffset = (ramBank % ramBankCount) * 0x2000;
-                return ramBanks[ramOffset + (address - 0xA000)];
+                int offset = ramOffset + (address - 0xA000);
+                return offset < ramBanks.Length ? ramBanks[offset] : (byte)0xFF;
             }
             return 0xFF;
         }
@@ -339,9 +344,11 @@ class MBC {
             //No banking mode for MBC1
         } else if (address >= 0xA000 && address < 0xC000) {
             //RAM Write (common)
-            if (ramEnabled) {
+            if (ramEnabled && ramBankCount > 0) {
                 int ramOffset = (ramBank % ramBankCount) * 0x2000;
-                ramBanks[ramOffset + (address - 0xA000)] = value;
+                int offset = ramOffset + (address - 0xA000);
+                if (offset < ramBanks.Length)
+                    ramBanks[offset] = value;
             }
         }
     }

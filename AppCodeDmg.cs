@@ -144,9 +144,11 @@ namespace BRCCodeDmg
 
         private void TryBootEmulator()
         {
-            string romPath = GetConfiguredRomPath();
+            string romPath     = GetConfiguredRomPath();
             string bootRomPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
-            string savePath = GetBatterySavePath(romPath);
+            string savePath    = GetBatterySavePath(romPath);
+            string statePath   = GetStatePath();
+            string md5Path     = GetMd5Path(romPath);
 
             if (!File.Exists(romPath))
             {
@@ -154,6 +156,44 @@ namespace BRCCodeDmg
                 _emulator = null;
                 return;
             }
+
+            // ── MD5 ROM integrity check ───────────────────────────────────────
+            byte[] romBytes  = File.ReadAllBytes(romPath);
+            string romTitle  = ReadRomTitle(romBytes);
+            string currentMd5 = ComputeMd5(romBytes);
+
+            string storedMd5 = null;
+            if (File.Exists(md5Path))
+            {
+                try { storedMd5 = File.ReadAllText(md5Path).Trim(); }
+                catch { /* treat as missing */ }
+            }
+
+            if (storedMd5 == null)
+            {
+                // First boot with this ROM — write the fingerprint and continue.
+                WriteMd5(md5Path, currentMd5);
+                Debug.Log($"[CODE-DMG] ROM fingerprinted: \"{romTitle}\" ({currentMd5})");
+            }
+            else if (!string.Equals(storedMd5, currentMd5, StringComparison.OrdinalIgnoreCase))
+            {
+                // ROM has changed — rotate old save/state files and update fingerprint.
+                Debug.LogWarning($"[CODE-DMG] ROM changed! Was {storedMd5}, now {currentMd5} (\"{romTitle}\"). Rotating save files.");
+                RotateFile(savePath);
+                RotateFile(statePath);
+                WriteMd5(md5Path, currentMd5);
+            }
+            // ─────────────────────────────────────────────────────────────────
+
+            // ── Save-states-disabled cleanup ──────────────────────────────────
+            bool autoSave = CodeDmgPlugin.ConfigSettings?.AutoSaveOnClose.Value ?? true;
+            bool autoLoad = CodeDmgPlugin.ConfigSettings?.AutoLoadOnOpen.Value ?? true;
+            if (!autoSave && !autoLoad)
+            {
+                RotateFile(statePath);
+                RotateFile(savePath);
+            }
+            // ─────────────────────────────────────────────────────────────────
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
 
@@ -166,6 +206,90 @@ namespace BRCCodeDmg
                 _audioDriver.SetEmulator(_emulator);
         }
 
+        // ── ROM helpers ───────────────────────────────────────────────────────
+
+        /// <summary>Computes the MD5 of <paramref name="data"/> and returns it as a lowercase hex string.</summary>
+        private static string ComputeMd5(byte[] data)
+        {
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+            {
+                byte[] hash = md5.ComputeHash(data);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        /// <summary>Reads the ROM title from header bytes 0x134–0x143, trimmed of null/whitespace.</summary>
+        private static string ReadRomTitle(byte[] rom)
+        {
+            if (rom.Length < 0x144) return "Unknown";
+            // GBC games use 0x134–0x13E (11 bytes); DMG uses up to 0x143 (16 bytes).
+            // Reading all 16 and trimming is safe for both.
+            int len = Math.Min(16, rom.Length - 0x134);
+            string raw = System.Text.Encoding.ASCII.GetString(rom, 0x134, len);
+            return raw.TrimEnd('\0', ' ');
+        }
+
+        private static string GetMd5Path(string romPath)
+        {
+            string dir  = Path.GetDirectoryName(romPath) ?? CodeDmgPlugin.Instance.PluginDirectory;
+            string name = Path.GetFileNameWithoutExtension(romPath);
+            return Path.Combine(dir, name + ".md5");
+        }
+
+        private static void WriteMd5(string md5Path, string hash)
+        {
+            try { File.WriteAllText(md5Path, hash); }
+            catch (Exception ex) { Debug.LogWarning("[CODE-DMG] Could not write MD5 file: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// Renames <paramref name="path"/> to the next available <c>-old1</c>, <c>-old2</c>, …
+        /// slot so that no existing backup is ever overwritten.
+        /// </summary>
+        private static void RotateFile(string path)
+        {
+            if (!File.Exists(path)) return;
+
+            string dir  = Path.GetDirectoryName(path) ?? "";
+            string name = Path.GetFileNameWithoutExtension(path);
+            string ext  = Path.GetExtension(path);
+
+            int n = 1;
+            string dest;
+            do
+            {
+                dest = Path.Combine(dir, $"{name}-old{n}{ext}");
+                n++;
+            }
+            while (File.Exists(dest));
+
+            try
+            {
+                File.Move(path, dest);
+                Debug.Log($"[CODE-DMG] Rotated: {Path.GetFileName(path)} → {Path.GetFileName(dest)}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CODE-DMG] Could not rotate {Path.GetFileName(path)}: {ex.Message}");
+            }
+        }
+
+        private static string PeekStateRomPath(string statePath)
+        {
+            if (!File.Exists(statePath)) return null;
+            try
+            {
+                using (FileStream fs = File.OpenRead(statePath))
+                using (BinaryReader br = new BinaryReader(fs))
+                {
+                    int version = br.ReadInt32();
+                    if (version < 1) return null;
+                    return br.ReadString();
+                }
+            }
+            catch { return null; }
+        }
+
         private string GetConfiguredRomPath()
         {
             if (CodeDmgPlugin.ConfigSettings != null)
@@ -173,8 +297,17 @@ namespace BRCCodeDmg
                 string configuredPath = CodeDmgPlugin.ConfigSettings.RomPath.Value;
 
                 if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
-                    return configuredPath;
+                {
+                    string ext = Path.GetExtension(configuredPath).ToLowerInvariant();
+                    if (ext == ".gb" || ext == ".gbc")
+                        return configuredPath;
+                }
             }
+
+            // Try rom.gbc first, then fall back to rom.gb
+            string gbcPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "rom.gbc");
+            if (File.Exists(gbcPath))
+                return gbcPath;
 
             return Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "rom.gb");
         }
@@ -279,8 +412,11 @@ namespace BRCCodeDmg
 
             CodeDmgConfig cfg = CodeDmgPlugin.ConfigSettings;
 
-            float h = Input.GetAxisRaw("Horizontal");
-            float v = Input.GetAxisRaw("Vertical");
+            // Use joystick-specific axes (Joystick Axis 1/2) rather than Unity's
+            // general "Horizontal"/"Vertical" axes, which also pick up BRC's keyboard
+            // bindings and cause spurious dpad presses when Z/X/S are held.
+            float h = Input.GetAxisRaw("Joystick Axis 1");
+            float v = Input.GetAxisRaw("Joystick Axis 2");
 
             _emulator.SetButton(
                 GameBoyButton.A,

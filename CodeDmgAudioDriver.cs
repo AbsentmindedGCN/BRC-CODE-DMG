@@ -64,6 +64,11 @@ namespace BRCCodeDmg
             if (channels <= 0)
                 return;
 
+            // Read volume from config (0-100), convert to 0.0-1.0 scale
+            float volume = 1f;
+            if (CodeDmgPlugin.ConfigSettings != null)
+                volume = Mathf.Clamp01(CodeDmgPlugin.ConfigSettings.Volume.Value / 100f);
+
             int frameCount = data.Length / channels;
             int stereoSamplesNeeded = frameCount * 2;
 
@@ -78,28 +83,24 @@ namespace BRCCodeDmg
 
             if (channels == 1)
             {
-                // Mono device: downmix by averaging left and right
                 for (int frame = 0; frame < framesRead; frame++)
                 {
                     float left  = _stereoTemp[frame * 2];
                     float right = _stereoTemp[frame * 2 + 1];
-                    data[frame] = (left + right) * 0.5f;
+                    data[frame] = (left + right) * 0.5f * volume;
                 }
             }
             else
             {
-                // Stereo (or surround): route GB left→ch0, GB right→ch1,
-                // and copy to any additional channels as a silent fold-down.
                 for (int frame = 0; frame < framesRead; frame++)
                 {
-                    float left  = _stereoTemp[frame * 2];
-                    float right = _stereoTemp[frame * 2 + 1];
+                    float left  = _stereoTemp[frame * 2]  * volume;
+                    float right = _stereoTemp[frame * 2 + 1] * volume;
                     int baseIndex = frame * channels;
 
                     data[baseIndex + 0] = left;
                     data[baseIndex + 1] = right;
 
-                    // Centre/surround channels: fold-down to prevent silence
                     for (int c = 2; c < channels; c++)
                         data[baseIndex + c] = (left + right) * 0.5f;
                 }
