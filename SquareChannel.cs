@@ -1,5 +1,16 @@
 using System.IO;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX (Minor / Accuracy): The frequency timer now runs even when the channel is
+// disabled (Enabled == false).
+//
+// Per the GBDev wiki: "Note that this timer is always clocked, even when the
+// channel is disabled." On real hardware the phase timer continues to tick so
+// that when a channel is re-triggered mid-period, the duty-step position is
+// where the hardware would have it rather than frozen at the moment of disable.
+// This eliminates small clicks or incorrect phase glitches on re-trigger.
+// ─────────────────────────────────────────────────────────────────────────────
+
 public sealed class SquareChannel
 {
     private static readonly byte[][] DutyTable =
@@ -25,6 +36,7 @@ public sealed class SquareChannel
     private int lengthCounter;
     private int volume;
     private int envelopeTimer;
+
     private int sweepTimer;
     private int shadowFrequency;
     private bool sweepEnabled;
@@ -58,17 +70,16 @@ public sealed class SquareChannel
         dutyStep = 0;
     }
 
+    // ── Register writes ───────────────────────────────────────────────────────
+
     public void WriteNR10(byte value)
     {
         if (!hasSweep)
             return;
-
         bool oldNegate = (NR10 & 0x08) != 0;
         bool newNegate = (value & 0x08) != 0;
-
         if (oldNegate && !newNegate && sweepNegateUsed)
             Enabled = false;
-
         NR10 = value;
     }
 
@@ -81,7 +92,6 @@ public sealed class SquareChannel
     public void WriteNR12(byte value)
     {
         NR12 = value;
-
         if (!DacEnabled)
             Enabled = false;
     }
@@ -94,16 +104,16 @@ public sealed class SquareChannel
     public void WriteNR14(byte value)
     {
         NR14 = value;
-
         if ((value & 0x80) != 0)
             Trigger();
     }
 
+    // ── Clocking ──────────────────────────────────────────────────────────────
+
+    // FIX: No early-return guard on Enabled. The frequency timer ticks
+    // continuously on real hardware regardless of channel enabled state.
     public void StepTimer(int tCycles)
     {
-        if (!Enabled)
-            return;
-
         timer -= tCycles;
         while (timer <= 0)
         {
@@ -116,7 +126,6 @@ public sealed class SquareChannel
     {
         if (!Enabled || (NR14 & 0x40) == 0)
             return;
-
         if (lengthCounter > 0)
         {
             lengthCounter--;
@@ -139,18 +148,9 @@ public sealed class SquareChannel
             return;
 
         envelopeTimer = pace;
-
         bool increase = (NR12 & 0x08) != 0;
-        if (increase)
-        {
-            if (volume < 15)
-                volume++;
-        }
-        else
-        {
-            if (volume > 0)
-                volume--;
-        }
+        if (increase) { if (volume < 15) volume++; }
+        else          { if (volume > 0)  volume--; }
     }
 
     public void ClockSweep()
@@ -159,7 +159,6 @@ public sealed class SquareChannel
             return;
 
         int pace = (NR10 >> 4) & 0x07;
-
         sweepTimer--;
         if (sweepTimer > 0)
             return;
@@ -192,22 +191,23 @@ public sealed class SquareChannel
     {
         int delta = shadowFrequency >> (NR10 & 0x07);
         bool negate = (NR10 & 0x08) != 0;
-
         if (negate)
             sweepNegateUsed = true;
-
         return negate ? shadowFrequency - delta : shadowFrequency + delta;
     }
+
+    // ── Output ────────────────────────────────────────────────────────────────
 
     public int GetDigitalOutput()
     {
         if (!Enabled || !DacEnabled)
             return 0;
-
         int duty = (NR11 >> 6) & 0x03;
-        int bit = DutyTable[duty][dutyStep];
+        int bit  = DutyTable[duty][dutyStep];
         return bit != 0 ? volume : 0;
     }
+
+    // ── Trigger ───────────────────────────────────────────────────────────────
 
     private void Trigger()
     {
@@ -216,7 +216,6 @@ public sealed class SquareChannel
             Enabled = false;
             return;
         }
-
         Enabled = true;
 
         if (lengthCounter == 0)
@@ -227,21 +226,20 @@ public sealed class SquareChannel
         int envPeriod = NR12 & 0x07;
         envelopeTimer = (envPeriod == 0) ? 8 : envPeriod;
 
-        // Hardware quirk:
-        // trigger resets the frequency timer, but NOT the duty-step counter,
-        // and the low 2 bits of the timer are preserved.
+        // Reload the frequency timer. The low 2 bits of the old timer value are
+        // preserved by hardware (they carry over from the running timer).
         int low2 = timer & 0x03;
         timer = GetPeriod() | low2;
 
         if (hasSweep)
         {
             shadowFrequency = GetFrequency();
-
             int pace = (NR10 >> 4) & 0x07;
             sweepTimer = (pace == 0) ? 8 : pace;
             sweepEnabled = pace != 0 || (NR10 & 0x07) != 0;
             sweepNegateUsed = false;
 
+            // Overflow check on trigger
             if ((NR10 & 0x07) != 0 && CalculateSweepFrequency() > 2047)
                 Enabled = false;
         }
@@ -256,6 +254,8 @@ public sealed class SquareChannel
     {
         return (2048 - GetFrequency()) * 4;
     }
+
+    // ── State ─────────────────────────────────────────────────────────────────
 
     public void SaveState(BinaryWriter writer)
     {
@@ -278,20 +278,20 @@ public sealed class SquareChannel
 
     public void LoadState(BinaryReader reader)
     {
-        Enabled = reader.ReadBoolean();
-        NR10 = reader.ReadByte();
-        NR11 = reader.ReadByte();
-        NR12 = reader.ReadByte();
-        NR13 = reader.ReadByte();
-        NR14 = reader.ReadByte();
-        timer = reader.ReadInt32();
-        dutyStep = reader.ReadInt32();
-        lengthCounter = reader.ReadInt32();
-        volume = reader.ReadInt32();
-        envelopeTimer = reader.ReadInt32();
-        sweepTimer = reader.ReadInt32();
+        Enabled         = reader.ReadBoolean();
+        NR10            = reader.ReadByte();
+        NR11            = reader.ReadByte();
+        NR12            = reader.ReadByte();
+        NR13            = reader.ReadByte();
+        NR14            = reader.ReadByte();
+        timer           = reader.ReadInt32();
+        dutyStep        = reader.ReadInt32();
+        lengthCounter   = reader.ReadInt32();
+        volume          = reader.ReadInt32();
+        envelopeTimer   = reader.ReadInt32();
+        sweepTimer      = reader.ReadInt32();
         shadowFrequency = reader.ReadInt32();
-        sweepEnabled = reader.ReadBoolean();
+        sweepEnabled    = reader.ReadBoolean();
         sweepNegateUsed = reader.ReadBoolean();
     }
 }

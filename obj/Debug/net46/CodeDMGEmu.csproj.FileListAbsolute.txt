@@ -1,0 +1,7 @@
+I:\Visual Studio Code\BRC-CODEDMG\obj\Debug\net46\CodeDMGEmu.csproj.AssemblyReference.cache
+I:\Visual Studio Code\BRC-CODEDMG\obj\Debug\net46\CodeDMGEmu.GeneratedMSBuildEditorConfig.editorconfig
+I:\Visual Studio Code\BRC-CODEDMG\obj\Debug\net46\CodeDMGEmu.csproj.CoreCompileInputs.cache
+I:\Visual Studio Code\BRC-CODEDMG\bin\Debug\net46\CodeDMGEmu.dll
+I:\Visual Studio Code\BRC-CODEDMG\bin\Debug\net46\CodeDMGEmu.pdb
+I:\Visual Studio Code\BRC-CODEDMG\obj\Debug\net46\CodeDMGEmu.dll
+I:\Visual Studio Code\BRC-CODEDMG\obj\Debug\net46\CodeDMGEmu.pdb

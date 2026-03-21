@@ -1,6 +1,26 @@
 using System;
 using System.IO;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX (Minor): ClockDivApu previously incremented the frame sequencer step
+// BEFORE checking which components to clock. This meant step 0 (which should
+// clock the length counter on the very first frame sequencer event after APU
+// power-on) was never executed first — the channel would be clocked at step 1
+// instead.
+//
+// Pan Docs frame sequencer schedule:
+//   Step 0 : Length counter
+//   Step 1 : (nothing)
+//   Step 2 : Length counter + Sweep
+//   Step 3 : (nothing)
+//   Step 4 : Length counter
+//   Step 5 : (nothing)
+//   Step 6 : Length counter + Sweep
+//   Step 7 : Volume envelope
+//
+// The correct pattern is: evaluate the current step, THEN advance to the next.
+// ─────────────────────────────────────────────────────────────────────────────
+
 public sealed class APU
 {
     private const int CpuClock = 4194304;
@@ -14,7 +34,7 @@ public sealed class APU
     private readonly WaveChannel ch3;
     private readonly NoiseChannel ch4;
 
-    private int frameSequencerStep;
+    private int frameSequencerStep;   // 0–7, starts at 0 on APU power-on
     private double sampleCycleCounter;
 
     private readonly object sampleLock = new object();
@@ -23,7 +43,7 @@ public sealed class APU
     private int sampleWriteIndex;
     private int sampleCount;
 
-    // DMG capacitor HPF
+    // DMG capacitor high-pass filter state
     private double capacitorL;
     private double capacitorR;
     private readonly double hpfChargeFactor;
@@ -40,7 +60,7 @@ public sealed class APU
         ch3 = new WaveChannel();
         ch4 = new NoiseChannel();
 
-        // Pan Docs DMG factor adjusted to output sample rate
+        // Pan Docs DMG high-pass filter charge factor
         hpfChargeFactor = Math.Pow(0.999958, (double)CpuClock / this.sampleRate);
     }
 
@@ -93,8 +113,13 @@ public sealed class APU
         if ((mmu.NR52 & 0x80) == 0)
             return;
 
-        frameSequencerStep = (frameSequencerStep + 1) & 7;
+        // ── FIX: evaluate the current step FIRST, then advance. ──────────────
+        // The old code did (step++, then check), which meant the first event
+        // after power-on fired step 1 behaviour (nothing) instead of step 0
+        // (length counter clock).
+        // ─────────────────────────────────────────────────────────────────────
 
+        // Steps 0, 2, 4, 6 → clock length counters (256 Hz)
         if ((frameSequencerStep & 1) == 0)
         {
             ch1.ClockLength();
@@ -103,18 +128,24 @@ public sealed class APU
             ch4.ClockLength();
         }
 
+        // Steps 2, 6 → clock sweep (128 Hz)
         if (frameSequencerStep == 2 || frameSequencerStep == 6)
         {
             ch1.ClockSweep();
         }
 
+        // Step 7 → clock volume envelopes (64 Hz)
         if (frameSequencerStep == 7)
         {
             ch1.ClockEnvelope();
             ch2.ClockEnvelope();
             ch4.ClockEnvelope();
         }
+
+        frameSequencerStep = (frameSequencerStep + 1) & 7;
     }
+
+    // ── Register access ───────────────────────────────────────────────────────
 
     public byte ReadRegister(ushort address)
     {
@@ -125,23 +156,19 @@ public sealed class APU
             case 0xFF12: return ch1.NR12;
             case 0xFF13: return 0xFF;
             case 0xFF14: return (byte)(ch1.NR14 | 0xBF);
-
             case 0xFF16: return (byte)(ch2.NR11 | 0x3F);
             case 0xFF17: return ch2.NR12;
             case 0xFF18: return 0xFF;
             case 0xFF19: return (byte)(ch2.NR14 | 0xBF);
-
             case 0xFF1A: return (byte)(ch3.NR30 | 0x7F);
             case 0xFF1B: return 0xFF;
             case 0xFF1C: return (byte)(ch3.NR32 | 0x9F);
             case 0xFF1D: return 0xFF;
             case 0xFF1E: return (byte)(ch3.NR34 | 0xBF);
-
             case 0xFF20: return 0xFF;
             case 0xFF21: return ch4.NR42;
             case 0xFF22: return ch4.NR43;
             case 0xFF23: return (byte)(ch4.NR44 | 0xBF);
-
             case 0xFF24: return mmu.NR50;
             case 0xFF25: return mmu.NR51;
             case 0xFF26:
@@ -152,7 +179,6 @@ public sealed class APU
                     (ch2.Enabled ? 0x02 : 0) |
                     (ch3.Enabled ? 0x04 : 0) |
                     (ch4.Enabled ? 0x08 : 0));
-
             default:
                 if (address >= 0xFF30 && address <= 0xFF3F)
                     return ch3.ReadWaveRam(address);
@@ -172,6 +198,7 @@ public sealed class APU
 
         if (!apuOn)
         {
+            // When APU is off, only wave RAM and length registers are writable
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
 
@@ -182,7 +209,6 @@ public sealed class APU
                 case 0xFF1B: ch3.WriteNR31(value); break;
                 case 0xFF20: ch4.WriteNR41(value); break;
             }
-
             return;
         }
 
@@ -193,26 +219,21 @@ public sealed class APU
             case 0xFF12: ch1.WriteNR12(value); break;
             case 0xFF13: ch1.WriteNR13(value); break;
             case 0xFF14: ch1.WriteNR14(value); break;
-
             case 0xFF16: ch2.WriteNR11(value); break;
             case 0xFF17: ch2.WriteNR12(value); break;
             case 0xFF18: ch2.WriteNR13(value); break;
             case 0xFF19: ch2.WriteNR14(value); break;
-
             case 0xFF1A: ch3.WriteNR30(value); break;
             case 0xFF1B: ch3.WriteNR31(value); break;
             case 0xFF1C: ch3.WriteNR32(value); break;
             case 0xFF1D: ch3.WriteNR33(value); break;
             case 0xFF1E: ch3.WriteNR34(value); break;
-
             case 0xFF20: ch4.WriteNR41(value); break;
             case 0xFF21: ch4.WriteNR42(value); break;
             case 0xFF22: ch4.WriteNR43(value); break;
             case 0xFF23: ch4.WriteNR44(value); break;
-
             case 0xFF24: mmu.NR50 = value; break;
             case 0xFF25: mmu.NR51 = value; break;
-
             default:
                 if (address >= 0xFF30 && address <= 0xFF3F)
                     ch3.WriteWaveRam(address, value);
@@ -227,37 +248,37 @@ public sealed class APU
 
         if (!newEnabled)
         {
+            // Power-off: clear all registers and reset channels
             mmu.NR52 = 0x00;
             mmu.NR50 = 0x00;
             mmu.NR51 = 0x00;
             frameSequencerStep = 0;
-
             ch1.PowerOff();
             ch2.PowerOff();
             ch3.PowerOff();
             ch4.PowerOff();
-
             capacitorL = 0.0;
             capacitorR = 0.0;
         }
         else if (!oldEnabled)
         {
+            // Power-on: set enable flag, reset frame sequencer to step 0
             mmu.NR52 = 0x80;
             frameSequencerStep = 0;
-
             ch1.ResetDutyStep();
             ch2.ResetDutyStep();
             ch3.ResetAfterPowerOn();
             ch4.Reset();
-
             capacitorL = 0.0;
             capacitorR = 0.0;
         }
     }
 
+    // ── Mixing ────────────────────────────────────────────────────────────────
+
+    // Pan Docs DAC: digital 0 → analog +1.0, digital 15 → analog −1.0
     private static float DigitalToAnalog(int digital)
     {
-        // Pan Docs: digital 0 -> analog +1, digital 15 -> analog -1
         return 1.0f - (digital / 7.5f);
     }
 
@@ -270,7 +291,6 @@ public sealed class APU
     {
         double left = 0.0;
         double right = 0.0;
-
         bool leftAnyDac = false;
         bool rightAnyDac = false;
 
@@ -279,24 +299,26 @@ public sealed class APU
         float s3 = Channel3Analog();
         float s4 = Channel4Analog();
 
-        if ((mmu.NR51 & 0x10) != 0) { left += s1; leftAnyDac |= ch1.DacEnabled; }
-        if ((mmu.NR51 & 0x20) != 0) { left += s2; leftAnyDac |= ch2.DacEnabled; }
-        if ((mmu.NR51 & 0x40) != 0) { left += s3; leftAnyDac |= ch3.DacEnabled; }
-        if ((mmu.NR51 & 0x80) != 0) { left += s4; leftAnyDac |= ch4.DacEnabled; }
+        // NR51 panning — upper nibble = left, lower nibble = right
+        if ((mmu.NR51 & 0x10) != 0) { left  += s1; leftAnyDac  |= ch1.DacEnabled; }
+        if ((mmu.NR51 & 0x20) != 0) { left  += s2; leftAnyDac  |= ch2.DacEnabled; }
+        if ((mmu.NR51 & 0x40) != 0) { left  += s3; leftAnyDac  |= ch3.DacEnabled; }
+        if ((mmu.NR51 & 0x80) != 0) { left  += s4; leftAnyDac  |= ch4.DacEnabled; }
 
         if ((mmu.NR51 & 0x01) != 0) { right += s1; rightAnyDac |= ch1.DacEnabled; }
         if ((mmu.NR51 & 0x02) != 0) { right += s2; rightAnyDac |= ch2.DacEnabled; }
         if ((mmu.NR51 & 0x04) != 0) { right += s3; rightAnyDac |= ch3.DacEnabled; }
         if ((mmu.NR51 & 0x08) != 0) { right += s4; rightAnyDac |= ch4.DacEnabled; }
 
-        // Analog outputs are sums of routed channels, then master volume scales them.
-        double leftVol = (((mmu.NR50 >> 4) & 0x07) + 1) / 8.0;
+        // NR50 master volume: (vol + 1) / 8, then normalise 4-channel sum with 0.25
+        double leftVol  = (((mmu.NR50 >> 4) & 0x07) + 1) / 8.0;
         double rightVol = ((mmu.NR50 & 0x07) + 1) / 8.0;
 
-        left *= leftVol * 0.25;
+        left  *= leftVol  * 0.25;
         right *= rightVol * 0.25;
 
-        left = HighPassDMG(left, ref capacitorL, leftAnyDac);
+        // DMG capacitor high-pass filter
+        left  = HighPassDMG(left,  ref capacitorL, leftAnyDac);
         right = HighPassDMG(right, ref capacitorR, rightAnyDac);
 
         PushStereoSample(Clamp((float)left), Clamp((float)right));
@@ -306,7 +328,6 @@ public sealed class APU
     {
         if (!dacsEnabled)
             return 0.0;
-
         double output = input - capacitor;
         capacitor = input - output * hpfChargeFactor;
         return output;
@@ -315,9 +336,11 @@ public sealed class APU
     private static float Clamp(float v)
     {
         if (v < -1f) return -1f;
-        if (v > 1f) return 1f;
+        if (v >  1f) return  1f;
         return v;
     }
+
+    // ── FIFO ──────────────────────────────────────────────────────────────────
 
     private void PushStereoSample(float left, float right)
     {
@@ -356,18 +379,17 @@ public sealed class APU
         }
     }
 
+    // ── State ─────────────────────────────────────────────────────────────────
+
     public void SaveState(BinaryWriter writer)
     {
         writer.Write(frameSequencerStep);
         writer.Write(sampleCycleCounter);
-
         writer.Write(mmu.NR50);
         writer.Write(mmu.NR51);
         writer.Write(mmu.NR52);
-
         writer.Write(capacitorL);
         writer.Write(capacitorR);
-
         ch1.SaveState(writer);
         ch2.SaveState(writer);
         ch3.SaveState(writer);
@@ -378,19 +400,15 @@ public sealed class APU
     {
         frameSequencerStep = reader.ReadInt32();
         sampleCycleCounter = reader.ReadDouble();
-
         mmu.NR50 = reader.ReadByte();
         mmu.NR51 = reader.ReadByte();
         mmu.NR52 = reader.ReadByte();
-
         capacitorL = reader.ReadDouble();
         capacitorR = reader.ReadDouble();
-
         ch1.LoadState(reader);
         ch2.LoadState(reader);
         ch3.LoadState(reader);
         ch4.LoadState(reader);
-
         lock (sampleLock)
         {
             sampleReadIndex = 0;

@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "I+mVvT8HkEo=",
+  "success": true,
+  "projectFilePath": "I:\\Visual Studio Code\\BRC-CODEDMG\\CodeDMGEmu.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Phantasm\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "C:\\Users\\Phantasm\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net46\\1.0.3\\microsoft.netframework.referenceassemblies.net46.1.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

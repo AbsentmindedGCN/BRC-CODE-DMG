@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "dgSpecHash": "7yWIEhBmCRI=",
+  "success": false,
+  "projectFilePath": "I:\\Visual Studio Code\\BRC-CODEDMG\\libs\\BRC-CommonAPI\\CommonAPI.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Phantasm\\.nuget\\packages\\bepinex.assemblypublicizer.msbuild\\0.4.1\\bepinex.assemblypublicizer.msbuild.0.4.1.nupkg.sha512",
+    "C:\\Users\\Phantasm\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.2\\microsoft.netframework.referenceassemblies.1.0.2.nupkg.sha512",
+    "C:\\Users\\Phantasm\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net46\\1.0.2\\microsoft.netframework.referenceassemblies.net46.1.0.2.nupkg.sha512",
+    "C:\\Users\\Phantasm\\.nuget\\packages\\unityengine.modules\\2021.3.27\\unityengine.modules.2021.3.27.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package BepInEx.Analyzers. No packages exist with this id in source(s): Microsoft Visual Studio Offline Packages, nuget.org",
+      "libraryId": "BepInEx.Analyzers",
+      "targetGraphs": [
+        ".NETFramework,Version=v4.6"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package BepInEx.PluginInfoProps. No packages exist with this id in source(s): Microsoft Visual Studio Offline Packages, nuget.org",
+      "libraryId": "BepInEx.PluginInfoProps",
+      "targetGraphs": [
+        ".NETFramework,Version=v4.6"
+      ]
+    },
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package BepInEx.Core. No packages exist with this id in source(s): Microsoft Visual Studio Offline Packages, nuget.org",
+      "libraryId": "BepInEx.Core",
+      "targetGraphs": [
+        ".NETFramework,Version=v4.6"
+      ]
+    }
+  ]
+}

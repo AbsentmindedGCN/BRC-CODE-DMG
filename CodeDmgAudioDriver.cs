@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace BRCCodeDmg
 {
@@ -8,13 +8,11 @@ namespace BRCCodeDmg
         private AudioSource _audioSource;
         private CodeDmgEmulator _emulator;
         private bool _muted = true;
-
         private float[] _stereoTemp = new float[0];
 
         private void Awake()
         {
             _audioSource = GetComponent<AudioSource>();
-
             _audioSource.playOnAwake = true;
             _audioSource.loop = true;
             _audioSource.mute = false;
@@ -24,7 +22,6 @@ namespace BRCCodeDmg
             _audioSource.dopplerLevel = 0f;
             _audioSource.spread = 0f;
             _audioSource.reverbZoneMix = 0f;
-
             _audioSource.bypassEffects = true;
             _audioSource.bypassListenerEffects = true;
             _audioSource.bypassReverbZones = true;
@@ -44,6 +41,18 @@ namespace BRCCodeDmg
             _muted = muted;
         }
 
+        // ── FIX: Removed the "force mono" workaround. ──────────────────────────
+        // The previous code mixed left + right into a single mono signal to paper
+        // over channels that seemed to disappear. The root cause of that problem
+        // was the APU frame sequencer running 256× too fast (Timer.cs bit-4 bug),
+        // which caused length counters to expire almost instantly and made channels
+        // sound absent. Now that the timing is correct, proper stereo output is
+        // restored: the left APU output goes to the left speaker/headphone channel
+        // and the right APU output goes to the right.
+        //
+        // If Unity reports a mono output device (channels == 1) we downmix
+        // gracefully to keep things working on speakers that don't support stereo.
+        // ─────────────────────────────────────────────────────────────────────────
         private void OnAudioFilterRead(float[] data, int channels)
         {
             for (int i = 0; i < data.Length; i++)
@@ -67,17 +76,33 @@ namespace BRCCodeDmg
             int read = _emulator.Apu.ReadSamples(_stereoTemp, 0, stereoSamplesNeeded);
             int framesRead = read / 2;
 
-            for (int frame = 0; frame < framesRead; frame++)
+            if (channels == 1)
             {
-                float left = _stereoTemp[frame * 2];
-                float right = _stereoTemp[frame * 2 + 1];
+                // Mono device: downmix by averaging left and right
+                for (int frame = 0; frame < framesRead; frame++)
+                {
+                    float left  = _stereoTemp[frame * 2];
+                    float right = _stereoTemp[frame * 2 + 1];
+                    data[frame] = (left + right) * 0.5f;
+                }
+            }
+            else
+            {
+                // Stereo (or surround): route GB left→ch0, GB right→ch1,
+                // and copy to any additional channels as a silent fold-down.
+                for (int frame = 0; frame < framesRead; frame++)
+                {
+                    float left  = _stereoTemp[frame * 2];
+                    float right = _stereoTemp[frame * 2 + 1];
+                    int baseIndex = frame * channels;
 
-                // Force mono so hard-panned channels can't disappear
-                float mono = (left + right) * 0.5f;
+                    data[baseIndex + 0] = left;
+                    data[baseIndex + 1] = right;
 
-                int baseIndex = frame * channels;
-                for (int c = 0; c < channels; c++)
-                    data[baseIndex + c] = mono;
+                    // Centre/surround channels: fold-down to prevent silence
+                    for (int c = 2; c < channels; c++)
+                        data[baseIndex + c] = (left + right) * 0.5f;
+                }
             }
         }
     }
