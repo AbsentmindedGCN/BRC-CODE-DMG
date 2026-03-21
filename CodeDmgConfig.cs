@@ -25,6 +25,7 @@ namespace BRCCodeDmg
 
         // Display
         public ConfigEntry<string> BackgroundColor;
+        public ConfigEntry<bool>   PixelGrid;
 
         // Audio
         public ConfigEntry<bool> EnableAudio;
@@ -67,7 +68,14 @@ namespace BRCCodeDmg
                 "Display",
                 "BackgroundColor",
                 "#000000",
-                "Background color behind the Game Boy screen, as a hex value (e.g. #000000 for black, #1a1a2e for dark navy-gray)."
+                "Background color behind the Game Boy screen, as a hex value (e.g. #000000 for black, #1a1a2e for dark navy gray)."
+            );
+
+            PixelGrid = config.Bind(
+                "Display",
+                "PixelGrid",
+                true,
+                "Enable a GBC-style pixel grid overlay on the screen."
             );
 
             EnableAudio = config.Bind(

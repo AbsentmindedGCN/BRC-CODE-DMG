@@ -64,6 +64,11 @@
 			<Private>false</Private>
 		</Reference>
 
+		<Reference Include="UnityEngine.ImageConversionModule">
+			<HintPath>Libraries\UnityEngine.ImageConversionModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
 		<Reference Include="UnityEngine.UnityWebRequestModule">
 			<HintPath>$(ManagedPath)\UnityEngine.UnityWebRequestModule.dll</HintPath>
 			<Private>false</Private>
