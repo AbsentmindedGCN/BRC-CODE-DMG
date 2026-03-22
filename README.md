@@ -10,7 +10,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 - Auto Save and Auto Load, letting you quickly resume games
 - Ability to remap controls and add a pixel grid filter
 
-## How to Load Other Game ROMs
+### How to Load Other Game ROMs
 1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
 2. Access the config file using the Config editor in r2modman.
 3. Under "Change Game Rom" set the RomPath to the game you want to load. For example, *"C:\Users\Absentminded\Desktop\ROMs\Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"*.
