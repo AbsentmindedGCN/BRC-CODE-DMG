@@ -6,21 +6,18 @@ namespace BRCCodeDmg
 {
     public sealed class CodeDmgEmulator
     {
-        // ── Cycle budget per frame ─────────────────────────────────────────────
-        // DMG / GBC normal-speed: 70224 T-cycles per frame (59.7 Hz)
-        // GBC double-speed:      140448 T-cycles per frame
-        // The CPU returns 2x T-cycles per instruction in double-speed mode,
-        // so the frame loop runs to the same wall-clock time either way.
+        //private const int CyclesPerFrame = 70224;
         private const int CyclesPerFrameNormal = 70224;
-        private int CyclesPerFrame =>
-            Mmu != null && Mmu.CgbDoubleSpeed ? CyclesPerFrameNormal * 2 : CyclesPerFrameNormal;
 
-        private const int SaveStateVersion = 2; // bumped from 1 for GBC state fields
+        // Bumped from 1 → 2 because MMU layout expanded for GBC support
+        // (dual VRAM banks, 8×WRAM banks, CGB palette data, HDMA state).
+        // Old save states will fail gracefully with a clear error message.
+        private const int SaveStateVersion = 2;
 
-        private MMU Mmu { get; }
-        private CPU Cpu { get; }
-        public PPU  Ppu  { get; }
-        public APU  Apu  { get; }
+        private MMU    Mmu    { get; }
+        private CPU    Cpu    { get; }
+        public  PPU    Ppu    { get; }
+        public  APU    Apu    { get; }
         private Joypad Joypad { get; }
         private Timer  Timer  { get; }
 
@@ -36,7 +33,6 @@ namespace BRCCodeDmg
 
         public bool FrameDirty => Ppu.FrameDirty;
 
-        // ── Constructor ───────────────────────────────────────────────────────
         public CodeDmgEmulator(string romPath, string bootRomPath, string savePath)
         {
             _romPath     = romPath;
@@ -44,39 +40,13 @@ namespace BRCCodeDmg
             _savePath    = savePath;
 
             byte[] gameRom = File.ReadAllBytes(romPath);
-
-            // ── GBC detection ─────────────────────────────────────────────────
-            // ROM header byte 0x143: 0x80 = GBC compatible, 0xC0 = GBC only.
-            bool isGbc = gameRom.Length > 0x143 &&
-                         (gameRom[0x143] == 0x80 || gameRom[0x143] == 0xC0);
-
-            // ── Boot ROM selection ────────────────────────────────────────────
-            // Prefer a supplied boot ROM.  If the path points to a GBC boot ROM
-            // (2304 bytes = 0x900) use it as-is; a DMG boot ROM (256 bytes) is
-            // also accepted for GBC games (the CPU Reset() path sets GBC regs).
-            byte[] bootRom = null;
-            if (File.Exists(bootRomPath))
-            {
-                bootRom = File.ReadAllBytes(bootRomPath);
-            }
-            else if (isGbc)
-            {
-                // Try common alternative filenames next to the ROM.
-                string dir = Path.GetDirectoryName(romPath) ?? "";
-                string[] candidates = { "gbc_boot.bin", "cgb_boot.bin", "cgb_bios.bin" };
-                foreach (string c in candidates)
-                {
-                    string p = Path.Combine(dir, c);
-                    if (File.Exists(p)) { bootRom = File.ReadAllBytes(p); break; }
-                }
-            }
-
-            if (bootRom == null)
-                bootRom = new byte[isGbc ? 0x900 : 0x100]; // zeroed placeholder
+            byte[] bootRom = File.Exists(bootRomPath) ? File.ReadAllBytes(bootRomPath) : new byte[256];
 
             Helper.scale       = 1;
-            Helper.paletteName = "dmg"; // GBC games use palette RAM (mmu.GetBgColor/GetObjColor) not this table
+            Helper.paletteName = "dmg";
 
+            // MMU auto-detects GBC mode from cartridge header byte 0x143
+            // (0x80 = GBC-compatible, 0xC0 = GBC-only)
             Mmu    = new MMU(gameRom, bootRom, false);
             Cpu    = new CPU(Mmu);
             Ppu    = new PPU(Mmu);
@@ -87,59 +57,85 @@ namespace BRCCodeDmg
             Mmu.Apu   = Apu;
             Mmu.Timer = Timer;
 
-            // If no valid boot ROM was found, jump straight to 0x0100 with the
-            // correct post-boot register state for the detected hardware type.
-            bool hasValidBoot = bootRom.Length >= (isGbc ? 0x900 : 0x100) &&
-                                bootRom[0] != 0x00; // a real boot ROM starts with code
+            /*
+            if (!File.Exists(bootRomPath))
+            {
+                // GBC FIX: pass isGbc so the CPU sets A=0x11 (GBC hardware ID).
+                // Without this, GBC games see A=0x01 (DMG) and show the
+                // "This game is designed for use on Game Boy Color" warning.
+                Cpu.Reset(Mmu.IsCGBMode);
 
-            if (!hasValidBoot)
-                Cpu.Reset(isGbc);  // see CPU.cs patch guide for signature change
+                // Seed GBC palette / WRAM-bank / audio registers to the
+                // values the CGB boot ROM would have left behind.
+                if (Mmu.IsCGBMode)
+                    Mmu.InitializeCGBRegisters();
+            }
+            */
+
+            if (!File.Exists(bootRomPath))
+            {
+                // Detect GBC from cartridge header byte 0x143 (0x80/0xC0 = GBC).
+                // Pass isGbc so CPU sets A=0x11 (GBC hardware ID) instead of A=0x01 (DMG).
+                // Without this, GBC games show the "designed for Game Boy Color" warning.
+                bool isGbc = gameRom.Length > 0x143 &&
+                             (gameRom[0x143] == 0x80 || gameRom[0x143] == 0xC0);
+                Cpu.Reset(isGbc);
+            }
 
             Mmu.Load(_savePath);
         }
 
-        // ── Audio ─────────────────────────────────────────────────────────────
         public void SetAudioEnabled(bool enabled)
         {
             AudioEnabled = enabled;
             Apu?.SetEnabled(enabled);
         }
 
-        // ── Main emulation loop ───────────────────────────────────────────────
+        /*
         public void StepFrame()
         {
             int cycles = 0;
-            int budget  = CyclesPerFrame;
+            while (cycles < CyclesPerFrame)
+            {
+                int executed = Cpu.ExecuteInstruction();
+                cycles += executed;
+                Ppu.Step(executed);
+                Timer.Step(executed);
+                Apu.Step(executed);
+            }
+        }
+        */
+
+        public void StepFrame()
+        {
+            int cycles = 0;
+            int budget = Mmu.CgbDoubleSpeed ? CyclesPerFrameNormal * 2 : CyclesPerFrameNormal;
 
             while (cycles < budget)
             {
                 int executed = Cpu.ExecuteInstruction();
                 cycles += executed;
 
-                // In GBC double-speed mode the CPU ticks at 2x the rate of the
-                // PPU and APU.  Divide executed cycles by 2 so those subsystems
-                // advance at the correct 4.194 MHz wall-clock speed.
+                // In double-speed mode the CPU runs at 2× the clock of the PPU/APU.
+                // Halve the cycles so those subsystems advance at the correct rate.
                 int systemCycles = Mmu.CgbDoubleSpeed ? executed / 2 : executed;
 
                 Ppu.Step(systemCycles);
                 Timer.Step(executed);   // Timer always receives full CPU cycles
-                Apu.Step(systemCycles); // APU receives system (half) cycles
+                Apu.Step(systemCycles); // APU receives system-speed cycles
             }
         }
 
-        // ── Input ─────────────────────────────────────────────────────────────
         public void SetButton(GameBoyButton button, bool pressed)
         {
             Joypad.SetButton(button, pressed);
         }
 
-        // ── Save RAM ──────────────────────────────────────────────────────────
         public void SaveRam()
         {
             Mmu.Save(_savePath);
         }
 
-        // ── Save states ───────────────────────────────────────────────────────
         public byte[] SerializeState()
         {
             using (MemoryStream ms = new MemoryStream())
@@ -166,11 +162,13 @@ namespace BRCCodeDmg
             {
                 int version = reader.ReadInt32();
                 if (version != SaveStateVersion)
-                    throw new InvalidOperationException(
-                        $"Save state version mismatch: expected {SaveStateVersion}, got {version}");
+                    throw new InvalidOperationException("Unsupported savestate version: " + version);
 
-                string savedRom  = reader.ReadString();
-                string savedBoot = reader.ReadString();
+                string savedRomPath     = reader.ReadString();
+                string savedBootRomPath = reader.ReadString();
+
+                if (!string.Equals(savedRomPath ?? string.Empty, _romPath ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Savestate ROM mismatch.");
 
                 Mmu.LoadState(reader);
                 Cpu.LoadState(reader);

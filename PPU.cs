@@ -2,51 +2,50 @@ using System;
 using System.IO;
 using UnityEngine;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PPU.cs — Game Boy / Game Boy Color Picture Processing Unit
-//
-// GBC additions vs the original DMG-only file:
-//
-//  • HDMA hook  — mmu.StepHdma() called on every HBlank
-//  • BG / Window rendering
-//      – Reads tile *attributes* from VRAM bank 1 (same map address)
-//      – Attribute bits: palette(0-2), bank(3), flipX(5), flipY(6), priority(7)
-//      – Fetches tile row bytes from VRAM bank 0 or 1 depending on attr bit 3
-//      – Looks up the 15-bit GBC colour from mmu.GetBgColor(palette, colIdx)
-//      – Converts 5-5-5 GBC colour to Unity Color32
-//  • Sprite rendering
-//      – Reads tile bytes from VRAM bank 1 when OAM attr bit 3 is set
-//      – Uses OBJ colour palettes (0-7) from mmu.GetObjColor()
-//      – Applies GBC BG-to-OBJ priority (attr bit 7 + LCDC bit 0 master)
-//  • Stores per-pixel bg-colour-index for priority evaluation
-//  • Falls back gracefully to DMG rendering when mmu.IsGbc == false
-// ═══════════════════════════════════════════════════════════════════════════════
-
 namespace BRCCodeDmg
 {
+    // =========================================================================
+    //  PPU — Pixel Processing Unit  (DMG + GBC)
+    //
+    //  Key changes vs. original:
+    //   • GBC background tiles read attributes from VRAM bank 1 (per-tile
+    //     palette number 0-7, X/Y flip, tile VRAM bank, BG priority flag).
+    //   • Window tiles get the same GBC treatment.
+    //   • BG / Window colour comes from mmu.GetCGBBgColor() in GBC mode.
+    //   • Sprites in GBC mode select VRAM bank (OAM attr bit 3) and CGB OBJ
+    //     palette (OAM attr bits 0-2); OBP0/OBP1 are used only in DMG mode.
+    //   • Sprite-to-sprite priority follows OAM order in GBC (first sprite
+    //     wins) vs. lowest X in DMG.
+    //   • BG-to-sprite priority respects LCDC bit 0 (master priority) and BG
+    //     tile attribute bit 7 in GBC mode.
+    //   • bgColorIndexBuffer tracks raw 0-3 colour indices per pixel so the
+    //     sprite renderer can apply the correct priority rules.
+    //   • bgAttrPriorityBuffer tracks per-pixel BG-tile priority flags (GBC).
+    //   • mmu.ExecuteHBlankDMA() is called at the start of every HBlank so
+    //     H-Blank DMA updates are applied per-scanline as the hardware does it.
+    // =========================================================================
     public class PPU
     {
-        private const int HBLANK = 0;
-        private const int VBLANK = 1;
-        private const int OAM    = 2;
-        private const int VRAM   = 3;
-
+        // PPU modes
+        private const int HBLANK        = 0;
+        private const int VBLANK        = 1;
+        private const int OAM           = 2;
+        private const int VRAM_MODE     = 3;
         private const int SCANLINE_CYCLES = 456;
-        private const int ScreenWidth  = 160;
-        private const int ScreenHeight = 144;
+        private const int ScreenWidth   = 160;
+        private const int ScreenHeight  = 144;
 
-        private int mode;
-        private int cycles;
-
+        private int  mode;
+        private int  cycles;
         private readonly MMU mmu;
 
+        // Frame / scanline buffers
         private readonly Color32[] frameBuffer;
         private readonly Color32[] scanlineBuffer = new Color32[ScreenWidth];
 
-        // Per-pixel background colour index (0-3) and BG-priority flag.
-        // Used by the sprite renderer to respect BG-over-OBJ priority.
-        private readonly int[]  bgColorIndex   = new int[ScreenWidth];
-        private readonly bool[] bgHasPriority  = new bool[ScreenWidth]; // GBC attr bit 7
+        // Per-pixel tracking used by RenderSprites() for priority
+        private readonly int[]  bgColorIndexBuffer   = new int[ScreenWidth];  // raw 0-3 index
+        private readonly bool[] bgAttrPriorityBuffer = new bool[ScreenWidth]; // GBC tile attr bit 7
 
         private bool vblankTriggered;
         private int  windowLineCounter;
@@ -54,21 +53,24 @@ namespace BRCCodeDmg
 
         public bool FrameDirty { get; private set; }
 
-        // ── Constructor ───────────────────────────────────────────────────────
+        // =====================================================================
         public PPU(MMU mmu)
         {
-            this.mmu  = mmu;
-            mode      = OAM;
-            cycles    = 0;
+            this.mmu = mmu;
+            mode     = OAM;
+            cycles   = 0;
             frameBuffer = new Color32[ScreenWidth * ScreenHeight];
             ClearToPalette0();
         }
 
-        // ── Main step ─────────────────────────────────────────────────────────
+        // =====================================================================
+        // Main step
+        // =====================================================================
         public void Step(int elapsedCycles)
         {
             cycles += elapsedCycles;
 
+            // Handle LCD being toggled on
             if ((mmu.LCDC & 0x80) != 0 && lcdPreviouslyOff)
             {
                 cycles = 0;
@@ -87,12 +89,12 @@ namespace BRCCodeDmg
                     if (cycles >= 80)
                     {
                         cycles -= 80;
-                        mode = VRAM;
+                        mode = VRAM_MODE;
                         mmu.STAT = (byte)((mmu.STAT & 0xFC) | mode);
                     }
                     break;
 
-                case VRAM:
+                case VRAM_MODE:
                     if (cycles >= 172)
                     {
                         cycles -= 172;
@@ -102,9 +104,8 @@ namespace BRCCodeDmg
                         if (mmu.LY < 144)
                             RenderScanline();
 
-                        // GBC HDMA: transfer one 16-byte block at every HBlank
-                        if (mmu.IsGbc)
-                            mmu.StepHdma();
+                        // Trigger H-Blank DMA one block per HBlank
+                        mmu.ExecuteHBlankDMA();
 
                         if ((mmu.STAT & 0x08) != 0)
                             mmu.IF = (byte)(mmu.IF | 0x02);
@@ -123,7 +124,6 @@ namespace BRCCodeDmg
                             mode = VBLANK;
                             vblankTriggered = false;
                             FrameDirty = true;
-
                             if ((mmu.STAT & 0x10) != 0)
                                 mmu.IF = (byte)(mmu.IF | 0x02);
                         }
@@ -131,10 +131,8 @@ namespace BRCCodeDmg
                         {
                             if ((mmu.STAT & 0x20) != 0)
                                 mmu.IF = (byte)(mmu.IF | 0x02);
-
                             mode = OAM;
                         }
-
                         mmu.STAT = (byte)((mmu.STAT & 0xFC) | mode);
                     }
                     break;
@@ -148,7 +146,6 @@ namespace BRCCodeDmg
                             vblankTriggered = true;
                         }
                     }
-
                     if (cycles >= SCANLINE_CYCLES)
                     {
                         cycles -= SCANLINE_CYCLES;
@@ -158,11 +155,10 @@ namespace BRCCodeDmg
                         if (mmu.LY == 153)
                         {
                             mmu.LY = 0;
+                            windowLineCounter = 0;
                             mode = OAM;
                             vblankTriggered = false;
-                            windowLineCounter = 0;
                             mmu.STAT = (byte)((mmu.STAT & 0xFC) | mode);
-
                             if ((mmu.STAT & 0x20) != 0)
                                 mmu.IF = (byte)(mmu.IF | 0x02);
                         }
@@ -172,245 +168,305 @@ namespace BRCCodeDmg
         }
 
         public Color32[] GetUnityFrame() => frameBuffer;
-        public void ClearDirtyFlag() => FrameDirty = false;
+        public void ClearDirtyFlag()     => FrameDirty = false;
 
-        // ── Scanline rendering ────────────────────────────────────────────────
+        // =====================================================================
+        // Scanline rendering
+        // =====================================================================
         private void RenderScanline()
         {
+            // Clear priority tracking buffers for this scanline
             for (int i = 0; i < ScreenWidth; i++)
             {
-                bgColorIndex[i]  = 0;
-                bgHasPriority[i] = false;
+                bgColorIndexBuffer[i]   = 0;
+                bgAttrPriorityBuffer[i] = false;
             }
 
             RenderBackground();
             RenderWindow();
             RenderSprites();
+
             Array.Copy(scanlineBuffer, 0, frameBuffer, mmu.LY * ScreenWidth, ScreenWidth);
         }
 
-        // ── Background ────────────────────────────────────────────────────────
+        // =====================================================================
+        // Background
+        // =====================================================================
         private void RenderBackground()
         {
-            // On DMG, LCDC bit 0 = 0 blanks BG.
-            // On GBC, LCDC bit 0 = 0 only disables BG-to-OBJ priority (BG still shows).
-            if (!mmu.IsGbc && (mmu.LCDC & 0x01) == 0)
+            int currentScanline = mmu.LY;
+            int scrollX = mmu.SCX;
+            int scrollY = mmu.SCY;
+
+            bool cgb = mmu.IsCGBMode;
+
+            // DMG: LCDC bit 0 = 0 → BG disabled (fill with colour 0).
+            // CGB: LCDC bit 0 = 0 → Master priority off (BG still renders).
+            if (!cgb && (mmu.LCDC & 0x01) == 0)
+            {
+                // Fill scanline with DMG palette colour 0 and leave index buffer at 0.
+                Color32 c0 = ConvertDMGColor(0);
+                for (int x = 0; x < ScreenWidth; x++)
+                    scanlineBuffer[x] = c0;
                 return;
+            }
 
-            int scanline = mmu.LY;
-            int scrollX  = mmu.SCX;
-            int scrollY  = mmu.SCY;
-
-            ushort tileMapBase = (mmu.LCDC & 0x08) != 0 ? (ushort)0x9C00 : (ushort)0x9800;
+            ushort tileMapBase = ((mmu.LCDC & 0x08) != 0) ? (ushort)0x9C00 : (ushort)0x9800;
 
             for (int x = 0; x < ScreenWidth; x++)
             {
                 int bgX = (scrollX + x) & 0xFF;
-                int bgY = (scrollY + scanline) & 0xFF;
+                int bgY = (scrollY + currentScanline) & 0xFF;
 
-                ushort mapAddr = (ushort)(tileMapBase + (bgY / 8) * 32 + (bgX / 8));
-                byte tileNum   = mmu.Read(mapAddr);
+                int tileCol   = bgX >> 3;
+                int tileRow   = bgY >> 3;
+                int tileIndex = tileRow * 32 + tileCol;
 
-                // GBC: attribute byte at the same address in VRAM bank 1
-                byte attr     = mmu.IsGbc ? mmu.ReadVramBank1(mapAddr) : (byte)0;
-                bool useBank1 = mmu.IsGbc && (attr & 0x08) != 0;
-                bool flipX    = mmu.IsGbc && (attr & 0x20) != 0;
-                bool flipY    = mmu.IsGbc && (attr & 0x40) != 0;
-                int  palNum   = mmu.IsGbc ?  (attr & 0x07) : 0;
+                // Tile map is in VRAM bank 0; attributes are in VRAM bank 1 (GBC only)
+                int  tileMapRel = tileMapBase - 0x8000 + tileIndex;
+                byte tileNumber = mmu.ReadVramDirect(tileMapRel, 0);
+                byte attrs      = cgb ? mmu.ReadVramDirect(tileMapRel, 1) : (byte)0;
 
-                ushort tileAddr = TileAddress(tileNum, (mmu.LCDC & 0x10) != 0);
+                // Decode GBC tile attributes
+                int  attrPalette    = attrs & 0x07;            // BG palette 0-7
+                int  attrTileBank   = (attrs >> 3) & 0x01;     // Tile data VRAM bank
+                bool attrXFlip      = (attrs & 0x20) != 0;
+                bool attrYFlip      = (attrs & 0x40) != 0;
+                bool attrBgPriority = (attrs & 0x80) != 0;     // BG over OBJ priority flag
 
-                int lineInTile = bgY % 8;
-                if (flipY) lineInTile = 7 - lineInTile;
+                // Tile data base address
+                ushort tileDataBase = ((mmu.LCDC & 0x10) != 0 || tileNumber >= 128)
+                    ? (ushort)0x8000
+                    : (ushort)0x9000;
+                int tileRelBase = tileDataBase - 0x8000 + tileNumber * 16;
 
-                ushort rowAddr = (ushort)(tileAddr + lineInTile * 2);
-                byte lo = useBank1 ? mmu.ReadVramBank1(rowAddr)                    : mmu.Read(rowAddr);
-                byte hi = useBank1 ? mmu.ReadVramBank1((ushort)(rowAddr + 1))      : mmu.Read((ushort)(rowAddr + 1));
+                // Y position within the tile, with optional Y-flip
+                int lineInTile = bgY & 7;
+                if (attrYFlip) lineInTile = 7 - lineInTile;
 
-                int bit  = flipX ? (bgX & 7) : (7 - (bgX & 7));
-                int cidx = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+                // Fetch tile row data from the correct VRAM bank
+                int bank = cgb ? attrTileBank : 0;
+                byte tileLow  = mmu.ReadVramDirect(tileRelBase + lineInTile * 2,     bank);
+                byte tileHigh = mmu.ReadVramDirect(tileRelBase + lineInTile * 2 + 1, bank);
 
-                bgColorIndex[x]  = cidx;
-                bgHasPriority[x] = mmu.IsGbc && (attr & 0x80) != 0;
+                // Bit index within the tile, with optional X-flip
+                int bitIndex = attrXFlip ? (bgX & 7) : (7 - (bgX & 7));
+                int colorBit = (((tileHigh >> bitIndex) & 1) << 1) | ((tileLow >> bitIndex) & 1);
 
-                scanlineBuffer[x] = mmu.IsGbc
-                    ? GbcColorToColor32(mmu.GetBgColor(palNum, cidx))
-                    : ConvertDmgPaletteColor((mmu.BGP >> (cidx * 2)) & 0x03);
+                // Store raw colour index for sprite priority checks
+                bgColorIndexBuffer[x] = colorBit;
+                // BG priority flag is only meaningful in GBC mode and if colour != 0
+                bgAttrPriorityBuffer[x] = cgb && attrBgPriority && colorBit != 0;
+
+                // Resolve actual pixel colour
+                if (cgb)
+                    scanlineBuffer[x] = mmu.GetCGBBgColor(attrPalette, colorBit);
+                else
+                    scanlineBuffer[x] = ConvertDMGColor((mmu.BGP >> (colorBit * 2)) & 0x03);
             }
         }
 
-        // ── Window ────────────────────────────────────────────────────────────
+        // =====================================================================
+        // Window
+        // =====================================================================
         private void RenderWindow()
         {
-            if ((mmu.LCDC & (1 << 5)) == 0)
-                return;
+            if ((mmu.LCDC & (1 << 5)) == 0) return;
 
-            int scanline = mmu.LY;
-            int winX     = mmu.WX - 7;
-            int winY     = mmu.WY;
+            int currentScanline = mmu.LY;
+            int windowX = mmu.WX - 7;
+            int windowY = mmu.WY;
 
-            if (scanline < winY || winX >= ScreenWidth)
-                return;
+            if (currentScanline < windowY) return;
+            if (currentScanline == windowY) windowLineCounter = 0;
 
-            if (scanline == winY)
-                windowLineCounter = 0;
+            bool cgb = mmu.IsCGBMode;
+            ushort tileMapBase = ((mmu.LCDC & (1 << 6)) != 0) ? (ushort)0x9C00 : (ushort)0x9800;
 
-            ushort tileMapBase = (mmu.LCDC & (1 << 6)) != 0 ? (ushort)0x9C00 : (ushort)0x9800;
-            bool rendered = false;
+            bool windowRendered = false;
 
-            for (int x = Math.Max(0, winX); x < ScreenWidth; x++)
+            for (int x = 0; x < ScreenWidth; x++)
             {
-                rendered = true;
+                if (x < windowX) continue;
 
-                int winCol = x - winX;
-                int tileRow = windowLineCounter / 8;
-                int tileCol = winCol / 8;
+                windowRendered = true;
+                int windowCol = x - windowX;
+                int tileCol   = windowCol >> 3;
+                int tileRow   = windowLineCounter >> 3;
+                int tileIndex = tileRow * 32 + tileCol;
 
-                ushort mapAddr = (ushort)(tileMapBase + tileRow * 32 + tileCol);
-                byte tileNum   = mmu.Read(mapAddr);
+                int  tileMapRel = tileMapBase - 0x8000 + tileIndex;
+                byte tileNumber = mmu.ReadVramDirect(tileMapRel, 0);
+                byte attrs      = cgb ? mmu.ReadVramDirect(tileMapRel, 1) : (byte)0;
 
-                byte attr     = mmu.IsGbc ? mmu.ReadVramBank1(mapAddr) : (byte)0;
-                bool useBank1 = mmu.IsGbc && (attr & 0x08) != 0;
-                bool flipX    = mmu.IsGbc && (attr & 0x20) != 0;
-                bool flipY    = mmu.IsGbc && (attr & 0x40) != 0;
-                int  palNum   = mmu.IsGbc ?  (attr & 0x07) : 0;
+                int  attrPalette    = attrs & 0x07;
+                int  attrTileBank   = (attrs >> 3) & 0x01;
+                bool attrXFlip      = (attrs & 0x20) != 0;
+                bool attrYFlip      = (attrs & 0x40) != 0;
+                bool attrBgPriority = (attrs & 0x80) != 0;
 
-                ushort tileAddr = TileAddress(tileNum, (mmu.LCDC & (1 << 4)) != 0);
+                ushort tileDataBase = ((mmu.LCDC & (1 << 4)) != 0 || tileNumber >= 128)
+                    ? (ushort)0x8000
+                    : (ushort)0x9000;
+                int tileRelBase = tileDataBase - 0x8000 + tileNumber * 16;
 
-                int lineInTile = windowLineCounter % 8;
-                if (flipY) lineInTile = 7 - lineInTile;
+                int lineInTile = windowLineCounter & 7;
+                if (attrYFlip) lineInTile = 7 - lineInTile;
 
-                ushort rowAddr = (ushort)(tileAddr + lineInTile * 2);
-                byte lo = useBank1 ? mmu.ReadVramBank1(rowAddr)               : mmu.Read(rowAddr);
-                byte hi = useBank1 ? mmu.ReadVramBank1((ushort)(rowAddr + 1)) : mmu.Read((ushort)(rowAddr + 1));
+                int bank = cgb ? attrTileBank : 0;
+                byte tileLow  = mmu.ReadVramDirect(tileRelBase + lineInTile * 2,     bank);
+                byte tileHigh = mmu.ReadVramDirect(tileRelBase + lineInTile * 2 + 1, bank);
 
-                int bit  = flipX ? (winCol & 7) : (7 - (winCol & 7));
-                int cidx = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+                int bitIndex = attrXFlip ? (windowCol & 7) : (7 - (windowCol & 7));
+                int colorBit = (((tileHigh >> bitIndex) & 1) << 1) | ((tileLow >> bitIndex) & 1);
 
-                bgColorIndex[x]  = cidx;
-                bgHasPriority[x] = mmu.IsGbc && (attr & 0x80) != 0;
+                bgColorIndexBuffer[x]   = colorBit;
+                bgAttrPriorityBuffer[x] = cgb && attrBgPriority && colorBit != 0;
 
-                scanlineBuffer[x] = mmu.IsGbc
-                    ? GbcColorToColor32(mmu.GetBgColor(palNum, cidx))
-                    : ConvertDmgPaletteColor((mmu.BGP >> (cidx * 2)) & 0x03);
+                if (cgb)
+                    scanlineBuffer[x] = mmu.GetCGBBgColor(attrPalette, colorBit);
+                else
+                    scanlineBuffer[x] = ConvertDMGColor((mmu.BGP >> (colorBit * 2)) & 0x03);
             }
 
-            if (rendered)
-                windowLineCounter++;
+            if (windowRendered) windowLineCounter++;
         }
 
-        // ── Sprites ───────────────────────────────────────────────────────────
+        // =====================================================================
+        // Sprites (OBJ)
+        // =====================================================================
         private void RenderSprites()
         {
-            if ((mmu.LCDC & (1 << 1)) == 0)
-                return;
+            if ((mmu.LCDC & (1 << 1)) == 0) return;
 
-            int scanline  = mmu.LY;
-            int sprHeight = (mmu.LCDC & (1 << 2)) != 0 ? 16 : 8;
-            // GBC master-priority flag: when LCDC bit 0 = 0, sprites are always on top
-            bool masterPriorityOff = mmu.IsGbc && (mmu.LCDC & 0x01) == 0;
+            int currentScanline = mmu.LY;
+            bool cgb = mmu.IsCGBMode;
+
+            // In GBC mode, LCDC bit 0 = 0 means sprites ALWAYS win priority
+            // (the BG/Window still renders its colours, but priority bits ignored).
+            bool masterBgPriority = (mmu.LCDC & 0x01) != 0;
 
             int renderedSprites = 0;
+            // pixelOwner: DMG = X position of winning sprite, GBC = sprite OAM index
             int[] pixelOwner = new int[ScreenWidth];
             for (int i = 0; i < ScreenWidth; i++) pixelOwner[i] = -1;
 
+            int spriteHeight = ((mmu.LCDC & (1 << 2)) != 0) ? 16 : 8;
+
             for (int i = 0; i < 40; i++)
             {
-                if (renderedSprites >= 10)
-                    break;
+                if (renderedSprites >= 10) break;
 
-                int sprBase  = 0xFE00 + i * 4;
-                int yPos     = mmu.Read((ushort)(sprBase))     - 16;
-                int xPos     = mmu.Read((ushort)(sprBase + 1)) - 8;
-                byte tileIdx = mmu.Read((ushort)(sprBase + 2));
-                byte attr    = mmu.Read((ushort)(sprBase + 3));
+                int  spriteBase = 0xFE00 + i * 4;
+                int  yPos       = mmu.Read((ushort)(spriteBase))     - 16;
+                int  xPos       = mmu.Read((ushort)(spriteBase + 1)) - 8;
+                byte tileIndex  = mmu.Read((ushort)(spriteBase + 2));
+                byte attributes = mmu.Read((ushort)(spriteBase + 3));
 
-                if (scanline < yPos || scanline >= yPos + sprHeight)
+                if (currentScanline < yPos || currentScanline >= yPos + spriteHeight)
                     continue;
 
-                bool yFlip = (attr & (1 << 6)) != 0;
-                bool xFlip = (attr & (1 << 5)) != 0;
-                int lineInSprite = scanline - yPos;
-                if (yFlip) lineInSprite = sprHeight - 1 - lineInSprite;
+                int lineInSprite = currentScanline - yPos;
+                bool yFlip = (attributes & (1 << 6)) != 0;
+                if (yFlip) lineInSprite = spriteHeight - 1 - lineInSprite;
 
-                if (sprHeight == 16)
+                // 8×16 sprites: use even tile for top half, odd for bottom
+                if (spriteHeight == 16)
                 {
-                    tileIdx &= 0xFE;
-                    if (lineInSprite >= 8) { tileIdx++; lineInSprite -= 8; }
+                    tileIndex &= 0xFE;
+                    if (lineInSprite >= 8) { tileIndex++; lineInSprite -= 8; }
                 }
 
-                bool useBank1 = mmu.IsGbc && (attr & 0x08) != 0;
-                ushort tileAddr = (ushort)(0x8000 + tileIdx * 16 + lineInSprite * 2);
+                // GBC: bit 3 of attributes selects VRAM bank for tile data
+                int tileBank = (cgb && (attributes & (1 << 3)) != 0) ? 1 : 0;
 
-                byte lo = useBank1 ? mmu.ReadVramBank1(tileAddr)               : mmu.Read(tileAddr);
-                byte hi = useBank1 ? mmu.ReadVramBank1((ushort)(tileAddr + 1)) : mmu.Read((ushort)(tileAddr + 1));
+                int tileRelBase = tileIndex * 16 + lineInSprite * 2;
+                byte tileLow  = mmu.ReadVramDirect(tileRelBase,     tileBank);
+                byte tileHigh = mmu.ReadVramDirect(tileRelBase + 1, tileBank);
 
-                int sprPalNum = mmu.IsGbc ? (attr & 0x07) : ((attr & (1 << 4)) != 0 ? 1 : 0);
-                byte dmgPal   = (attr & (1 << 4)) != 0 ? mmu.OBP1 : mmu.OBP0;
-                bool bgOverObj = (attr & (1 << 7)) != 0;
+                bool xFlip = (attributes & (1 << 5)) != 0;
+
+                // GBC: bits 0-2 of attributes are the CGB OBJ palette number
+                // DMG: bit 4 selects OBP0 or OBP1
+                int cgbPalette  = attributes & 0x07;
+                bool useOBP1_dmg = (attributes & (1 << 4)) != 0;
+                byte dmgPalette = useOBP1_dmg ? mmu.OBP1 : mmu.OBP0;
 
                 for (int px = 0; px < 8; px++)
                 {
-                    int bit  = xFlip ? px : (7 - px);
-                    int cidx = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+                    int bitIndex = xFlip ? px : (7 - px);
+                    int colorBit = (((tileHigh >> bitIndex) & 1) << 1) | ((tileLow >> bitIndex) & 1);
 
-                    if (cidx == 0) continue; // transparent
+                    // Colour 0 is always transparent for sprites
+                    if (colorBit == 0) continue;
 
                     int screenX = xPos + px;
                     if (screenX < 0 || screenX >= ScreenWidth) continue;
 
-                    // Priority checks
-                    if (!masterPriorityOff)
+                    // --------------- Priority logic ---------------
+                    // GBC: first sprite in OAM order wins over later sprites
+                    // DMG: sprite with lower X position wins
+                    bool canDraw;
+                    if (cgb)
+                        canDraw = (pixelOwner[screenX] == -1);
+                    else
+                        canDraw = (pixelOwner[screenX] == -1 || xPos < pixelOwner[screenX]);
+
+                    if (!canDraw) continue;
+
+                    // --------------- BG-to-OBJ priority ---------------
+                    if (cgb)
                     {
-                        // GBC per-tile BG priority
-                        if (bgHasPriority[screenX] && bgColorIndex[screenX] != 0) continue;
-                        // OAM bg-over-obj
-                        if (bgOverObj && bgColorIndex[screenX] != 0) continue;
+                        // masterBgPriority = LCDC bit 0.
+                        // If 0: sprites always on top (no further checks needed).
+                        // If 1: BG tile attr bit 7 or OBJ attr bit 7 can make BG win
+                        //        when the BG pixel colour index != 0.
+                        if (masterBgPriority)
+                        {
+                            bool objAttrBgPriority = (attributes & (1 << 7)) != 0;
+                            if ((bgAttrPriorityBuffer[screenX] || objAttrBgPriority)
+                                && bgColorIndexBuffer[screenX] != 0)
+                                continue; // BG wins
+                        }
+                    }
+                    else
+                    {
+                        // DMG: OBJ attr bit 7 = 1 → sprite behind BG colours 1-3
+                        bool bgOverObj = (attributes & (1 << 7)) != 0;
+                        if (bgOverObj && bgColorIndexBuffer[screenX] != 0)
+                            continue;
                     }
 
-                    // First-sprite-wins (lowest OAM index has priority)
-                    if (pixelOwner[screenX] != -1 && xPos >= pixelOwner[screenX]) continue;
-                    pixelOwner[screenX] = xPos;
+                    // Record winner
+                    pixelOwner[screenX] = cgb ? i : xPos;
 
-                    scanlineBuffer[screenX] = mmu.IsGbc
-                        ? GbcColorToColor32(mmu.GetObjColor(sprPalNum, cidx))
-                        : ConvertDmgPaletteColor((dmgPal >> (cidx * 2)) & 0x03);
+                    // Resolve pixel colour
+                    Color32 pixelColor;
+                    if (cgb)
+                        pixelColor = mmu.GetCGBObjColor(cgbPalette, colorBit);
+                    else
+                        pixelColor = ConvertDMGColor((dmgPalette >> (colorBit * 2)) & 0x03);
+
+                    scanlineBuffer[screenX] = pixelColor;
                 }
 
                 renderedSprites++;
             }
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
+        // =====================================================================
+        // Colour helpers
+        // =====================================================================
 
-        /// <summary>Returns the VRAM address of the first byte of a tile's data.</summary>
-        private static ushort TileAddress(byte tileNum, bool unsigned)
-        {
-            if (unsigned)
-                return (ushort)(0x8000 + tileNum * 16);
-            else
-                return (ushort)(0x9000 + (sbyte)tileNum * 16);
-        }
-
-        /// <summary>Converts a 15-bit GBC colour (5-5-5 RGB) to Unity Color32.</summary>
-        private static Color32 GbcColorToColor32(ushort c)
-        {
-            int r5 = (c)       & 0x1F;
-            int g5 = (c >> 5)  & 0x1F;
-            int b5 = (c >> 10) & 0x1F;
-            return new Color32(
-                (byte)((r5 * 255 + 15) / 31),
-                (byte)((g5 * 255 + 15) / 31),
-                (byte)((b5 * 255 + 15) / 31),
-                255);
-        }
-
-        /// <summary>DMG: maps a 2-bit palette index through the active colour palette lookup table.</summary>
-        private Color32 ConvertDmgPaletteColor(int paletteColor)
+        // DMG: map a 0-3 palette colour index through the active DMG palette table
+        private Color32 ConvertDMGColor(int paletteColor)
         {
             return Helper.palettes[Helper.paletteName][paletteColor];
         }
 
+        // =====================================================================
+        // LYC / STAT
+        // =====================================================================
         private void SetLYCFlag()
         {
             if (mmu.LY == mmu.LYC)
@@ -421,28 +477,28 @@ namespace BRCCodeDmg
             }
             else
             {
-                mmu.STAT = (byte)(mmu.STAT & 0xFB);
+                mmu.STAT = (byte)(mmu.STAT & ~0x04);
             }
         }
 
         private void ClearToPalette0()
         {
-            Color32 c = ConvertDmgPaletteColor(0);
+            Color32 c = ConvertDMGColor(0);
             for (int i = 0; i < frameBuffer.Length; i++)
                 frameBuffer[i] = c;
         }
 
-        // ── State serialisation ───────────────────────────────────────────────
+        // =====================================================================
+        // Save State
+        // =====================================================================
         private static void WriteColor32Array(BinaryWriter writer, Color32[] data)
         {
             if (data == null) { writer.Write(-1); return; }
             writer.Write(data.Length);
-            for (int i = 0; i < data.Length; i++)
+            foreach (var c in data)
             {
-                writer.Write(data[i].r);
-                writer.Write(data[i].g);
-                writer.Write(data[i].b);
-                writer.Write(data[i].a);
+                writer.Write(c.r); writer.Write(c.g);
+                writer.Write(c.b); writer.Write(c.a);
             }
         }
 
@@ -450,7 +506,7 @@ namespace BRCCodeDmg
         {
             int length = reader.ReadInt32();
             if (length < 0) return null;
-            Color32[] data = new Color32[length];
+            var data = new Color32[length];
             for (int i = 0; i < length; i++)
             {
                 byte r = reader.ReadByte(), g = reader.ReadByte(),
@@ -473,22 +529,23 @@ namespace BRCCodeDmg
 
         public void LoadState(BinaryReader reader)
         {
-            mode              = reader.ReadInt32();
-            cycles            = reader.ReadInt32();
-            vblankTriggered   = reader.ReadBoolean();
-            windowLineCounter = reader.ReadInt32();
-            lcdPreviouslyOff  = reader.ReadBoolean();
+            mode               = reader.ReadInt32();
+            cycles             = reader.ReadInt32();
+            vblankTriggered    = reader.ReadBoolean();
+            windowLineCounter  = reader.ReadInt32();
+            lcdPreviouslyOff   = reader.ReadBoolean();
 
-            Color32[] loadedFrame = ReadColor32Array(reader);
-            Color32[] loadedScan  = ReadColor32Array(reader);
+            Color32[] fb = ReadColor32Array(reader);
+            Color32[] sb = ReadColor32Array(reader);
 
-            if (loadedFrame == null || loadedFrame.Length != frameBuffer.Length)
-                throw new InvalidOperationException("Invalid frameBuffer savestate data.");
-            if (loadedScan == null || loadedScan.Length != scanlineBuffer.Length)
-                throw new InvalidOperationException("Invalid scanlineBuffer savestate data.");
+            if (fb == null || fb.Length != frameBuffer.Length)
+                throw new InvalidOperationException("Invalid frameBuffer in savestate.");
+            if (sb == null || sb.Length != scanlineBuffer.Length)
+                throw new InvalidOperationException("Invalid scanlineBuffer in savestate.");
 
-            Array.Copy(loadedFrame, frameBuffer,    frameBuffer.Length);
-            Array.Copy(loadedScan,  scanlineBuffer, scanlineBuffer.Length);
+            Array.Copy(fb, frameBuffer,    frameBuffer.Length);
+            Array.Copy(sb, scanlineBuffer, scanlineBuffer.Length);
+
             FrameDirty = true;
         }
     }

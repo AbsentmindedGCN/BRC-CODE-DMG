@@ -74,7 +74,7 @@ namespace BRCCodeDmg
             PixelGrid = config.Bind(
                 "Display",
                 "PixelGrid",
-                true,
+                false,
                 "Enable a GBC-style pixel grid overlay on the screen."
             );
 

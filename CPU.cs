@@ -2449,19 +2449,18 @@ class CPU {
         return 4;
     }
 
-    private int STOP() {
-        // Skip the mandatory 0x00 operand byte
-        PC++;
-
-        // GBC speed switch: if KEY1 bit 0 (prepare) is set, toggle double-speed
-        if (mmu.IsGbc && (mmu.Read(0xFF4D) & 0x01) != 0) {
+    private int STOP()
+    {
+        // GBC speed switch: KEY1 bit 0 armed → toggle double-speed and RESUME.
+        // On real hardware STOP with KEY1 bit 0 set switches speed and immediately
+        // continues execution. It does NOT enter halt/low-power mode.
+        if (mmu.IsGbc && (mmu.Read(0xFF4D) & 0x01) != 0)
+        {
             mmu.ExecuteSpeedSwitch();
-            mmu.Timer?.ResetDiv();
+            return 4; // resume immediately, do NOT halt
         }
-        // else: normal STOP — low-power mode until joypad interrupt (halted stays true)
-        // The Game Boy wakes from STOP on any joypad button press, which the
-        // existing interrupt handling in HandleInterrupts() already manages.
-
+        // Normal STOP: low-power mode until a joypad interrupt wakes the CPU.
+        halted = true;
         return 4;
     }
 
