@@ -16,7 +16,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 ### > How Do I Load Other Game ROMs?
 1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
 2. Access the config file using the Config editor in r2modman.
-3. Under "Change Game Rom" set the RomPath to the game you want to load. For example, *"C:\Users\TransRights\Desktop\ROMs\Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"*.
+3. Under "Change Game Rom" set the RomPath to the game you want to load. For example, *"C:\Users\TransRights\Desktop\ROMs\Rom Name Here.gbc"*.
 4. Hit *Save* in the upper right-hand corner.
 5. If you're in-game, close the app, then re-open it. The new game will start.
 
