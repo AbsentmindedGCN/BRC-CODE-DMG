@@ -59,11 +59,11 @@ namespace BRCCodeDmg
 
             _audioDriver.SetMuted(true);
 
-            // First boot — no state loading yet; that happens in OnAppEnable.
-            TryBootEmulator();
+            //TryBootEmulator();
             RenderNow();
         }
 
+        /*
         public override void OnAppEnable()
         {
             base.OnAppEnable();
@@ -126,7 +126,43 @@ namespace BRCCodeDmg
 
             RenderNow();
         }
+        */
 
+        public override void OnAppEnable()
+        {
+            base.OnAppEnable();
+
+            CodeDmgState.AppActive = true;
+            GBEmuCurrentState.AppActive = true;
+
+            FlushCurrentPlayerInput();
+            _emulationTimeAccumulator = 0f;
+
+            if (_renderer == null)
+            {
+                _renderer = new CodeDmgRenderer(this);
+                _renderer.Build();
+            }
+
+            if (_audioDriver != null)
+                _audioDriver.SetMuted(false);
+
+            // Always begin from a fresh emulator instance.
+            TryBootEmulator();
+
+            if (_emulator != null &&
+                CodeDmgPlugin.ConfigSettings != null &&
+                CodeDmgPlugin.ConfigSettings.AutoLoadOnOpen.Value)
+            {
+                string statePath = GetStatePath(_loadedRomPath);
+                if (File.Exists(statePath))
+                    TryLoadState();
+            }
+
+            RenderNow();
+        }
+
+        /*
         public override void OnAppDisable()
         {
             base.OnAppDisable();
@@ -146,6 +182,43 @@ namespace BRCCodeDmg
                 if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoSave.Value ?? true)
                     _emulator.SaveRam();
             }
+        }
+        */
+
+        public override void OnAppDisable()
+        {
+            base.OnAppDisable();
+
+            if (_audioDriver != null)
+                _audioDriver.SetMuted(true);
+
+            CodeDmgState.AppActive = false;
+            GBEmuCurrentState.AppActive = false;
+
+            FlushCurrentPlayerInput();
+
+            if (_emulator != null)
+            {
+                if (CodeDmgPlugin.ConfigSettings != null &&
+                    CodeDmgPlugin.ConfigSettings.AutoSaveOnClose.Value)
+                {
+                    SaveState();
+                }
+
+                // Only save cartridge RAM, like a real GBC
+                if (CodeDmgPlugin.ConfigSettings != null &&
+                    CodeDmgPlugin.ConfigSettings.AutoSaveOnClose.Value)
+                {
+                    _emulator.SaveRam();
+                }
+            }
+
+            // Force a fresh session next time the app opens.
+            _emulator = null;
+            _emulationTimeAccumulator = 0f;
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(null);
         }
 
         public override void OnAppUpdate()
@@ -173,6 +246,7 @@ namespace BRCCodeDmg
         }
 
         // ── Boot ──────────────────────────────────────────────────────────────
+        /*
         private void TryBootEmulator()
         {
             string romPath     = GetConfiguredRomPath();
@@ -202,14 +276,51 @@ namespace BRCCodeDmg
             if (_audioDriver != null)
                 _audioDriver.SetEmulator(_emulator);
         }
+        */
+
+        private void TryBootEmulator()
+        {
+            string romPath = GetConfiguredRomPath();
+            string bootRomPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
+
+            string savePath = null;
+            if (CodeDmgPlugin.ConfigSettings != null &&
+                CodeDmgPlugin.ConfigSettings.BatterySaveAutoLoad.Value)
+            {
+                savePath = GetBatterySavePath(romPath);
+            }
+
+            if (!File.Exists(romPath))
+            {
+                Debug.LogWarning("[CODE-DMG] Missing ROM. Checked: " + romPath);
+                _emulator = null;
+                return;
+            }
+
+            _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+
+            if (CodeDmgPlugin.ConfigSettings != null)
+                _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+            else
+                _emulator.SetAudioEnabled(false);
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(_emulator);
+        }
 
         // ── Save state helpers ────────────────────────────────────────────────
         private void SaveState()
         {
             if (_emulator == null) return;
+
+            if (CodeDmgPlugin.ConfigSettings == null ||
+                !CodeDmgPlugin.ConfigSettings.AutoSaveOnClose.Value)
+                return;
+
             try
             {
-                File.WriteAllBytes(GetStatePath(_loadedRomPath), _emulator.SerializeState());
+                byte[] stateData = _emulator.SerializeState();
+                File.WriteAllBytes(GetStatePath(_loadedRomPath), stateData);
             }
             catch (Exception ex)
             {
@@ -221,22 +332,29 @@ namespace BRCCodeDmg
         {
             if (_emulator == null) return;
 
+            if (CodeDmgPlugin.ConfigSettings == null ||
+                !CodeDmgPlugin.ConfigSettings.AutoLoadOnOpen.Value)
+                return;
+
             string statePath = GetStatePath(_loadedRomPath);
             if (!File.Exists(statePath)) return;
 
             try
             {
-                byte[] data = File.ReadAllBytes(statePath);
+                byte[] stateData = File.ReadAllBytes(statePath);
 
-                var loaded = new CodeDmgEmulator(
+                CodeDmgEmulator loaded = new CodeDmgEmulator(
                     _emulator.RomPath,
                     _emulator.BootRomPath,
-                    _emulator.SavePath);
+                    _emulator.SavePath
+                );
 
                 if (CodeDmgPlugin.ConfigSettings != null)
                     loaded.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+                else
+                    loaded.SetAudioEnabled(false);
 
-                loaded.DeserializeState(data);
+                loaded.DeserializeState(stateData);
                 _emulator = loaded;
 
                 if (_audioDriver != null)
@@ -245,15 +363,21 @@ namespace BRCCodeDmg
             catch (Exception ex)
             {
                 Debug.LogWarning("[CODE-DMG] Failed to load state: " + ex.Message);
+
                 try
                 {
-                    string bad = statePath + ".bad";
-                    if (File.Exists(bad)) File.Delete(bad);
-                    File.Move(statePath, bad);
+                    string badPath = statePath + ".bad";
+                    if (File.Exists(badPath))
+                        File.Delete(badPath);
+                    File.Move(statePath, badPath);
                 }
-                catch { }
+                catch (Exception renameEx)
+                {
+                    Debug.LogWarning("[CODE-DMG] Failed to quarantine bad state file: " + renameEx.Message);
+                }
 
                 TryBootEmulator();
+
                 if (_audioDriver != null)
                     _audioDriver.SetEmulator(_emulator);
             }
@@ -365,6 +489,26 @@ namespace BRCCodeDmg
             }
             catch { }
             return defaultValue;
+        }
+
+        // Shutdown Emu
+        private void ShutdownEmulator(bool saveState, bool saveBatteryRam)
+        {
+            if (_emulator != null)
+            {
+                if (saveState)
+                    SaveState();
+
+                if (saveBatteryRam)
+                    _emulator.SaveRam();
+            }
+
+            _emulator = null;
+            _loadedRomPath = null;
+            _emulationTimeAccumulator = 0f;
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(null);
         }
 
         // ── Input ─────────────────────────────────────────────────────────────
