@@ -10,6 +10,8 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 - Auto Save and Auto Load, letting you quickly resume games
 - Ability to remap controls and add a pixel grid filter
 
+---
+## FAQs
 ### How to Load Other Game ROMs
 1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
 2. Access the config file using the Config editor in r2modman.
@@ -19,25 +21,25 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 
 **TIP:** If you ever need to change controls or settings, close the app on your phone, then reopen it. Each time the app is opened, it will re-read your config file.
 
-## Where do I get Game ROMs?
+### Where do I get Game ROMs?
 There's a lot of great Game Boy and Gameboy Color [Homebrew ROMs on itch.io](https://itch.io/games/tag-gameboy)!
 
-## Main Controls
+### What are the Controls?
+#### Main Controls
 - **D-Pad** = Joystick
 - **A Button** = A Button
 - **B Button** = B Button
 - **Start** = X Button
 - **Select** = Y Button
 
-## Keyboard Controls
+#### Keyboard Controls
 - **D-Pad** = WASD Keys
 - **A Button** = Period Key
 - **B Button** = Comma Key
 - **Start** = Enter Key
 - **Select** = Right Shift Key
 
-## Notes
-- Link Cable/Multiplayer is not supported
+---
 
 ## Special Thanks
 - [Bot Randomness](https://github.com/BotRandomness), for making his [CODE-DMG emulator](https://github.com/BotRandomness/CODE-DMG) open source, it has been an invaluable starting point
@@ -46,6 +48,13 @@ There's a lot of great Game Boy and Gameboy Color [Homebrew ROMs on itch.io](htt
 - [Marat Fayzullin](https://fms.komkon.org/), for [Pan Docs](https://gbdev.io/pandocs/Audio.html)
 - [Gekkio](https://github.com/Gekkio), for [TCAGBD](https://raw.githubusercontent.com/AntonioND/giibiiadvance/master/docs/TCAGBD.pdf) and the [Mooneye GB Test Suite](https://github.com/Gekkio/mooneye-test-suite)
 - [LIJI32](https://github.com/LIJI32), for [SameBoy](https://github.com/LIJI32/SameBoy), which was referenced frequently
+
+---
+
+## Notes
+- Link Cable/Multiplayer is currently not supported
+
+---
 
 ## MIT License
 Copyright (c) Absentminded / Bot Randomness
