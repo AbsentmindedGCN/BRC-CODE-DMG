@@ -18,7 +18,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 **TIP:** If you ever need to change controls or settings, close the app on your phone, then reopen it. Each time the app is opened, it will re-read your config file.
 
 ## Where do I get Game ROMs?
-There's a lot of great homebrew Game Boy and Gameboy Color [Homebrew ROMs on itch.io](https://itch.io/games/tag-gameboy)!
+There's a lot of great Game Boy and Gameboy Color [Homebrew ROMs on itch.io](https://itch.io/games/tag-gameboy)!
 
 ## Main Controls
 - **D-Pad** = Joystick
