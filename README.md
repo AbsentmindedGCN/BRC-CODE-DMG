@@ -11,6 +11,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 - Ability to remap controls and add a pixel grid filter
 
 ---
+
 ## FAQs
 ### > How Do I Load Other Game ROMs?
 1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
