@@ -25,8 +25,8 @@ This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyber
 - Link Cable/Multiplayer is not supported
 
 # Special Thanks
-- Bot Randomness, for making his emulator open source, has been an invaluable starting point.
-- c-sp, for compiling GB Test Roms to find and address compatibility issues (also Blargg's Test Roms).
+- Bot Randomness, for making his emulator open source, it has been an invaluable starting point
+- c-sp, for compiling GB Test Roms to find and address compatibility issues (also Blargg's Test Roms)
 - Marat Fayzullin, for Pan Docs
 - Gekkio, for TCAGBD and the Mooneye GB Test Suite
 - LIJI32, for SameBoy, which was referenced frequently
