@@ -38,7 +38,7 @@ namespace BRCCodeDmg
         public CodeDmgConfig(ConfigFile config)
         {
             RomPath = config.Bind(
-                "General",
+                "Change Game ROM",
                 "RomPath",
                 "",
                 "Path to ROM file (.gb or .gbc). Leave empty to use rom.gbc / rom.gb in plugin folder."
@@ -97,14 +97,14 @@ namespace BRCCodeDmg
             );
 
             EnableAudio = config.Bind(
-                "Audio",
+                "Music/Audio",
                 "EnableAudio",
                 true,
                 "Enable Game Boy audio emulation."
             );
 
             Volume = config.Bind(
-                "Audio",
+                "Music/Audio",
                 "Volume",
                 80,
                 new ConfigDescription(
