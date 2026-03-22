@@ -1,12 +1,24 @@
 # BRC CODE-DMG
 This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyberfunk. It features new additions, including audio emulation and Game Boy Color support.
-Comes with the hit homebrew game, [Tobu Tobu Girl DX](https://tangramgames.itch.io/tobu-tobu-girl-deluxe)!
+Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgames.itch.io/tobu-tobu-girl-deluxe)!
 
 ## Features
 - Full (though definitely inaccurate) GB experience within BRC
 - SGB/GBC Compatibility
 - Auto Save and Auto Load, letting you quickly resume games
 - Ability to remap controls and add a pixel grid filter
+
+## How to Load Other Game ROMs
+1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
+2. Access the config file using the Config editor in r2modman.
+3. Under "Change Game Rom" set the RomPath to the game you want to load. For example, *"C:\Users\Absentminded\Desktop\ROMs\Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"*.
+4. Hit *Save* in the upper righthand corner.
+5. If you're in-game, close the app, then re-open it. The new game will start.
+
+**TIP:** If you ever need to change controls or settings, close the app on your phone, then reopen it. Each time the app is opened, it will re-read your config file.
+
+## Where do I get Game ROMs?
+There's a lot of great homebrew Game Boy and Gameboy Color [Homebrew ROMs on itch.io](https://itch.io/games/tag-gameboy)!
 
 ## Main Controls
 - **D-Pad** = Joystick
