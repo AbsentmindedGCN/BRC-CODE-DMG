@@ -111,8 +111,10 @@ namespace BRCCodeDmg
             {
                 SaveState();
             }
-
-            _emulator?.SaveRam();
+            if (_emulator != null && (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoSave.Value ?? true))
+            {
+                _emulator.SaveRam();
+            }
         }
 
         public override void OnAppUpdate()
@@ -196,6 +198,9 @@ namespace BRCCodeDmg
             // ─────────────────────────────────────────────────────────────────
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+
+            if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoLoad.Value ?? true)
+                _emulator.LoadSaveRam();
 
             if (CodeDmgPlugin.ConfigSettings != null)
                 _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);

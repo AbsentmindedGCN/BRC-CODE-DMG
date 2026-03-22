@@ -82,7 +82,7 @@ namespace BRCCodeDmg
                 Cpu.Reset(isGbc);
             }
 
-            Mmu.Load(_savePath);
+            //Mmu.Load(_savePath);
         }
 
         public void SetAudioEnabled(bool enabled)
@@ -136,6 +136,11 @@ namespace BRCCodeDmg
             Mmu.Save(_savePath);
         }
 
+        public void LoadSaveRam()
+        {
+            Mmu.Load(_savePath);
+        }
+
         public byte[] SerializeState()
         {
             using (MemoryStream ms = new MemoryStream())
@@ -178,5 +183,6 @@ namespace BRCCodeDmg
                 Apu.LoadState(reader);
             }
         }
+
     }
 }

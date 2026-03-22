@@ -25,8 +25,8 @@ namespace BRCCodeDmg
         private Image _fullScreenBlack;
         private RectTransform _fullScreenBlackRect;
 
-        private const int TexWidth = GbWidth * Scale;
-        private const int TexHeight = GbHeight * Scale;
+        //private const int TexWidth = GbWidth * Scale;
+        //private const int TexHeight = GbHeight * Scale;
 
         private RawImage _logoImage;
         private Color32[] _blitBuffer;
@@ -74,12 +74,21 @@ namespace BRCCodeDmg
             _screenImage.color = Color.white;
             _screenImage.raycastTarget = false;
 
+            /*
             _screenTexture = new Texture2D(TexWidth, TexHeight, TextureFormat.RGBA32, false, false);
             _screenTexture.filterMode = FilterMode.Point;
             _screenTexture.wrapMode = TextureWrapMode.Clamp;
             _screenImage.texture = _screenTexture;
 
             _blitBuffer = new Color32[TexWidth * TexHeight];
+            */
+
+            _screenTexture = new Texture2D(GbWidth, GbHeight, TextureFormat.RGBA32, false, false);
+            _screenTexture.filterMode = FilterMode.Point; // GPU handles 6× scaling
+            _screenTexture.wrapMode = TextureWrapMode.Clamp;
+            _screenImage.texture = _screenTexture;
+
+            _blitBuffer = new Color32[GbWidth * GbHeight];
             ClearTexture();
 
             // --- Grid Overlay (The Fix) ---
@@ -166,8 +175,11 @@ namespace BRCCodeDmg
             if (_gridOverlay != null && _gridOverlay.enabled != gridOn)
                 _gridOverlay.enabled = gridOn;
 
+            //Color32[] source = emulator.Ppu.GetUnityFrame();
+            //UpscaleAndBlit(source, _blitBuffer);
+
             Color32[] source = emulator.Ppu.GetUnityFrame();
-            UpscaleAndBlit(source, _blitBuffer);
+            FlipRowsForUnity(source, _blitBuffer);
 
             _screenTexture.SetPixels32(_blitBuffer);
             _screenTexture.Apply(false, false);
@@ -175,6 +187,7 @@ namespace BRCCodeDmg
             emulator.Ppu.ClearDirtyFlag();
         }
 
+        /*
         private static void UpscaleAndBlit(Color32[] src, Color32[] dst)
         {
             for (int gbY = 0; gbY < GbHeight; gbY++)
@@ -192,6 +205,18 @@ namespace BRCCodeDmg
                             dst[dstRow + dstColBase + dx] = pixel;
                     }
                 }
+            }
+        }
+        */
+
+        private static void FlipRowsForUnity(Color32[] source, Color32[] dest)
+        {
+            for (int y = 0; y < GbHeight; y++)
+            {
+                int srcRow = y * GbWidth;
+                int dstRow = (GbHeight - 1 - y) * GbWidth;
+                for (int x = 0; x < GbWidth; x++)
+                    dest[dstRow + x] = source[srcRow + x];
             }
         }
 

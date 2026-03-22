@@ -23,6 +23,10 @@ namespace BRCCodeDmg
         public ConfigEntry<bool> AutoSaveOnClose;
         public ConfigEntry<bool> AutoLoadOnOpen;
 
+        // Battery Saves
+        public ConfigEntry<bool> BatterySaveAutoSave;
+        public ConfigEntry<bool> BatterySaveAutoLoad;
+
         // Display
         public ConfigEntry<string> BackgroundColor;
         public ConfigEntry<bool>   PixelGrid;
@@ -62,6 +66,20 @@ namespace BRCCodeDmg
                 "AutoLoadOnOpen",
                 true,
                 "Automatically load state when opening the app."
+            );
+
+            BatterySaveAutoSave = config.Bind(
+                "SaveStates",
+                "BatterySaveAutoSave",
+                true,
+                "Automatically write the battery save (.sav) file when closing the app."
+            );
+
+            BatterySaveAutoLoad = config.Bind(
+                "SaveStates",
+                "BatterySaveAutoLoad",
+                true,
+                "Automatically load the battery save (.sav) file when starting the emulator."
             );
 
             BackgroundColor = config.Bind(
