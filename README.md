@@ -12,7 +12,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 
 ---
 ## FAQs
-### How to Load Other Game ROMs
+### > How Do I Load Other Game ROMs?
 1. Boot BRC with the plugin installed to generate the config file. It's named *"transrights.codedmg.cfg"*.
 2. Access the config file using the Config editor in r2modman.
 3. Under "Change Game Rom" set the RomPath to the game you want to load. For example, *"C:\Users\Absentminded\Desktop\ROMs\Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"*.
@@ -21,10 +21,10 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 
 **TIP:** If you ever need to change controls or settings, close the app on your phone, then reopen it. Each time the app is opened, it will re-read your config file.
 
-### Where do I get Game ROMs?
+### > Where do I get Game ROMs?
 There's a lot of great Game Boy and Gameboy Color [Homebrew ROMs on itch.io](https://itch.io/games/tag-gameboy)!
 
-### What are the Controls?
+### > What are the Controls?
 #### Main Controls
 - **D-Pad** = Joystick
 - **A Button** = A Button
