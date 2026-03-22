@@ -1,4 +1,4 @@
-# CODE-DMG
+# BRC CODE-DMG
 This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyberfunk. It features new additions, including audio emulation and Game Boy Color support.
 Comes with the hit homebrew game, [Tobu Tobu Girl DX](https://tangramgames.itch.io/tobu-tobu-girl-deluxe)!
 
