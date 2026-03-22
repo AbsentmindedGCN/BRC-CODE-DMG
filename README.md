@@ -1,14 +1,38 @@
 # CODE-DMG
-This mod makes CODE-DMG accessible via the ingame phone.
+This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyberfunk. It features new additions, including audio emulation and GameBoy Color support.
 
-# Controls
-- TBD
+# Features
+- Full (though definitely inaccurate) GB experience within BRC
+- SGB/GBC Compatibility
+- Auto Save and Auto Load, letting you quickly resume games
+- Ability to remap controls and add a pixel grid filter
+
+# Main Controls
+- DPad = Joystick
+- A Button = A Button
+- B Button = B Button
+- Start = X Button
+- Select = Y Button
+
+# Keyboard Controls
+- DPad = WASD Keys
+- A Button = Period Key
+- B Button = Comma Key
+- Start = Enter Key
+- Select = Right Shift Key
 
 # Notes
-- TBD
+- Link Cable/Multiplayer is not supported
+
+# Special Thanks
+- Bot Randomness, for making his emulator open source, has been an invaluable starting point.
+- c-sp, for compiling GB Test Roms to find and address compatibility issues (also Blargg's Test Roms).
+- Marat Fayzullin, for Pan Docs
+- Gekkio, for TCAGBD and the Mooneye GB Test Suite
+- LIJI32, for SameBoy, which was referenced frequently
 
 #MIT License
-Copyright (c) 2025 Bot Randomness
+Copyright (c) Absentminded/Bot Randomness
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
