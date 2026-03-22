@@ -1,5 +1,6 @@
 # CODE-DMG
-This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyberfunk. It features new additions, including audio emulation and GameBoy Color support.
+This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyberfunk. It features new additions, including audio emulation and Game Boy Color support.
+Comes with the hit homebrew game, [Tobu Tobu Girl DX](https://tangramgames.itch.io/tobu-tobu-girl-deluxe)!
 
 ## Features
 - Full (though definitely inaccurate) GB experience within BRC
@@ -8,28 +9,29 @@ This mod is a port of BotRandomness' GB emulator, CODE-DMG, into Bomb Rush Cyber
 - Ability to remap controls and add a pixel grid filter
 
 ## Main Controls
-- DPad = Joystick
-- A Button = A Button
-- B Button = B Button
-- Start = X Button
-- Select = Y Button
+- **D-Pad** = Joystick
+- **A Button** = A Button
+- **B Button** = B Button
+- **Start** = X Button
+- **Select** = Y Button
 
 ## Keyboard Controls
-- DPad = WASD Keys
-- A Button = Period Key
-- B Button = Comma Key
-- Start = Enter Key
-- Select = Right Shift Key
+- **D-Pad** = WASD Keys
+- **A Button** = Period Key
+- **B Button** = Comma Key
+- **Start** = Enter Key
+- **Select** = Right Shift Key
 
 ## Notes
 - Link Cable/Multiplayer is not supported
 
 ## Special Thanks
-- Bot Randomness, for making his emulator open source, it has been an invaluable starting point
-- c-sp, for compiling GB Test Roms to find and address compatibility issues (also Blargg's Test Roms)
-- Marat Fayzullin, for Pan Docs
-- Gekkio, for TCAGBD and the Mooneye GB Test Suite
-- LIJI32, for SameBoy, which was referenced frequently
+- [Bot Randomness](https://github.com/BotRandomness), for making his [CODE-DMG emulator](https://github.com/BotRandomness/CODE-DMG) open source, it has been an invaluable starting point
+- Tangram Games, for making [Tobu Tobu Girl DX](https://github.com/SimonLarsen/tobutobugirl-dx) free and open source, which is included in the app
+- [c-sp](https://github.com/c-sp), for compiling [GB Test Roms](https://github.com/c-sp/game-boy-test-roms) to find and address compatibility issues (also Blargg's Test Roms)
+- [Marat Fayzullin](https://fms.komkon.org/), for [Pan Docs](https://gbdev.io/pandocs/Audio.html)
+- [Gekkio](https://github.com/Gekkio), for [TCAGBD](https://raw.githubusercontent.com/AntonioND/giibiiadvance/master/docs/TCAGBD.pdf) and the [Mooneye GB Test Suite](https://github.com/Gekkio/mooneye-test-suite)
+- [LIJI32](https://github.com/LIJI32), for [SameBoy](https://github.com/LIJI32/SameBoy), which was referenced frequently
 
 ## MIT License
 Copyright (c) Absentminded/Bot Randomness
