@@ -132,6 +132,9 @@ namespace BRCCodeDmg
         {
             base.OnAppEnable();
 
+            CodeDmgPlugin.Instance.Config.Reload();
+            CodeDmgPlugin.ConfigSettings = new CodeDmgConfig(CodeDmgPlugin.Instance.Config);
+
             CodeDmgState.AppActive = true;
             GBEmuCurrentState.AppActive = true;
 
@@ -147,17 +150,32 @@ namespace BRCCodeDmg
             if (_audioDriver != null)
                 _audioDriver.SetMuted(false);
 
-            // Always begin from a fresh emulator instance.
-            TryBootEmulator();
+            string configuredRom = GetConfiguredRomPath();
+            _loadedRomPath = configuredRom;
 
-            if (_emulator != null &&
-                CodeDmgPlugin.ConfigSettings != null &&
-                CodeDmgPlugin.ConfigSettings.AutoLoadOnOpen.Value)
+            bool romChanged = _emulator != null &&
+                !string.Equals(
+                    Path.GetFullPath(configuredRom),
+                    Path.GetFullPath(_emulator.RomPath),
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (romChanged)
             {
-                string statePath = GetStatePath(_loadedRomPath);
-                if (File.Exists(statePath))
-                    TryLoadState();
+                if (ReadBoolFromConfig("SaveStates", "AutoSaveOnClose", true))
+                    SaveState();
+
+                if (ReadBoolFromConfig("SaveStates", "BatterySaveAutoSave", true))
+                    _emulator.SaveRam();
+
+                _emulator = null;
             }
+
+            if (_emulator == null)
+                TryBootEmulator();
+
+            bool autoLoad = ReadBoolFromConfig("SaveStates", "AutoLoadOnOpen", true);
+            if (_emulator != null && autoLoad)
+                TryLoadState();
 
             RenderNow();
         }
@@ -281,23 +299,23 @@ namespace BRCCodeDmg
         private void TryBootEmulator()
         {
             string romPath = GetConfiguredRomPath();
-            string bootRomPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
+            _loadedRomPath = romPath;
 
-            string savePath = null;
-            if (CodeDmgPlugin.ConfigSettings != null &&
-                CodeDmgPlugin.ConfigSettings.BatterySaveAutoLoad.Value)
-            {
-                savePath = GetBatterySavePath(romPath);
-            }
+            string bootRomPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
+            string savePath = GetBatterySavePath(romPath);
 
             if (!File.Exists(romPath))
             {
-                Debug.LogWarning("[CODE-DMG] Missing ROM. Checked: " + romPath);
+                Debug.LogWarning("[CODE-DMG] Missing ROM: " + romPath);
                 _emulator = null;
+                _loadedRomPath = null;
                 return;
             }
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+
+            if (ReadBoolFromConfig("SaveStates", "BatterySaveAutoLoad", true))
+                _emulator.LoadSaveRam();
 
             if (CodeDmgPlugin.ConfigSettings != null)
                 _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
@@ -313,14 +331,16 @@ namespace BRCCodeDmg
         {
             if (_emulator == null) return;
 
-            if (CodeDmgPlugin.ConfigSettings == null ||
-                !CodeDmgPlugin.ConfigSettings.AutoSaveOnClose.Value)
+            string romPath = !string.IsNullOrWhiteSpace(_loadedRomPath)
+                ? _loadedRomPath
+                : GetConfiguredRomPath();
+
+            if (string.IsNullOrWhiteSpace(romPath))
                 return;
 
             try
             {
-                byte[] stateData = _emulator.SerializeState();
-                File.WriteAllBytes(GetStatePath(_loadedRomPath), stateData);
+                File.WriteAllBytes(GetStatePath(romPath), _emulator.SerializeState());
             }
             catch (Exception ex)
             {
@@ -332,30 +352,32 @@ namespace BRCCodeDmg
         {
             if (_emulator == null) return;
 
-            if (CodeDmgPlugin.ConfigSettings == null ||
-                !CodeDmgPlugin.ConfigSettings.AutoLoadOnOpen.Value)
+            string romPath = !string.IsNullOrWhiteSpace(_loadedRomPath)
+                ? _loadedRomPath
+                : GetConfiguredRomPath();
+
+            if (string.IsNullOrWhiteSpace(romPath))
                 return;
 
-            string statePath = GetStatePath(_loadedRomPath);
+            string statePath = GetStatePath(romPath);
             if (!File.Exists(statePath)) return;
 
             try
             {
-                byte[] stateData = File.ReadAllBytes(statePath);
+                byte[] data = File.ReadAllBytes(statePath);
 
-                CodeDmgEmulator loaded = new CodeDmgEmulator(
-                    _emulator.RomPath,
+                var loaded = new CodeDmgEmulator(
+                    romPath,
                     _emulator.BootRomPath,
                     _emulator.SavePath
                 );
 
                 if (CodeDmgPlugin.ConfigSettings != null)
                     loaded.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
-                else
-                    loaded.SetAudioEnabled(false);
 
-                loaded.DeserializeState(stateData);
+                loaded.DeserializeState(data);
                 _emulator = loaded;
+                _loadedRomPath = romPath;
 
                 if (_audioDriver != null)
                     _audioDriver.SetEmulator(_emulator);
@@ -363,23 +385,6 @@ namespace BRCCodeDmg
             catch (Exception ex)
             {
                 Debug.LogWarning("[CODE-DMG] Failed to load state: " + ex.Message);
-
-                try
-                {
-                    string badPath = statePath + ".bad";
-                    if (File.Exists(badPath))
-                        File.Delete(badPath);
-                    File.Move(statePath, badPath);
-                }
-                catch (Exception renameEx)
-                {
-                    Debug.LogWarning("[CODE-DMG] Failed to quarantine bad state file: " + renameEx.Message);
-                }
-
-                TryBootEmulator();
-
-                if (_audioDriver != null)
-                    _audioDriver.SetEmulator(_emulator);
             }
         }
 
