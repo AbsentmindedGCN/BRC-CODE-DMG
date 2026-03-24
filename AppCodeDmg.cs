@@ -391,7 +391,11 @@ namespace BRCCodeDmg
         // ── Path helpers ──────────────────────────────────────────────────────
         private static string GetSavesFolder()
         {
-            string folder = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "saves");
+            string folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "Bomb Rush Cyberfunk Modding",
+                "BRCGameBoyEmu",
+                "Saves");
             Directory.CreateDirectory(folder);
             return folder;
         }
