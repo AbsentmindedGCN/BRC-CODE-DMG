@@ -1,21 +1,5 @@
 using System.IO;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Timer.cs — Game Boy / Game Boy Color hardware timer
-//
-// GBC double-speed change:
-//   In double-speed mode the CPU (and therefore the internal div counter) runs
-//   at 8.388608 MHz instead of 4.194304 MHz.  The APU frame sequencer must
-//   still fire at 512 Hz, so we monitor bit 13 of the div counter instead of
-//   bit 12.  Both conditions produce a falling edge at 512 Hz:
-//
-//     Normal speed:  bit 12 falling edge at  4.194 MHz  →  512 Hz
-//     Double speed:  bit 13 falling edge at  8.388 MHz  →  512 Hz
-//
-// The TIMA timer bit-masks are similarly doubled in double-speed mode so that
-// TIMA increments at the same wall-clock rates as on DMG.
-// ─────────────────────────────────────────────────────────────────────────────
-
 public class Timer
 {
     private readonly MMU mmu;

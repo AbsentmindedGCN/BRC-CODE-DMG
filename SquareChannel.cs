@@ -1,16 +1,5 @@
 using System.IO;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FIX (Minor / Accuracy): The frequency timer now runs even when the channel is
-// disabled (Enabled == false).
-//
-// Per the GBDev wiki: "Note that this timer is always clocked, even when the
-// channel is disabled." On real hardware the phase timer continues to tick so
-// that when a channel is re-triggered mid-period, the duty-step position is
-// where the hardware would have it rather than frozen at the moment of disable.
-// This eliminates small clicks or incorrect phase glitches on re-trigger.
-// ─────────────────────────────────────────────────────────────────────────────
-
 public sealed class SquareChannel
 {
     private static readonly byte[][] DutyTable =

@@ -11,7 +11,6 @@ namespace BRCCodeDmg
 
         // Bumped from 1 → 2 because MMU layout expanded for GBC support
         // (dual VRAM banks, 8×WRAM banks, CGB palette data, HDMA state).
-        // Old save states will fail gracefully with a clear error message.
         private const int SaveStateVersion = 2;
 
         private MMU    Mmu    { get; }
@@ -57,21 +56,6 @@ namespace BRCCodeDmg
             Mmu.Apu   = Apu;
             Mmu.Timer = Timer;
 
-            /*
-            if (!File.Exists(bootRomPath))
-            {
-                // GBC FIX: pass isGbc so the CPU sets A=0x11 (GBC hardware ID).
-                // Without this, GBC games see A=0x01 (DMG) and show the
-                // "This game is designed for use on Game Boy Color" warning.
-                Cpu.Reset(Mmu.IsCGBMode);
-
-                // Seed GBC palette / WRAM-bank / audio registers to the
-                // values the CGB boot ROM would have left behind.
-                if (Mmu.IsCGBMode)
-                    Mmu.InitializeCGBRegisters();
-            }
-            */
-
             if (!File.Exists(bootRomPath))
             {
                 // Detect GBC from cartridge header byte 0x143 (0x80/0xC0 = GBC).
@@ -90,21 +74,6 @@ namespace BRCCodeDmg
             AudioEnabled = enabled;
             Apu?.SetEnabled(enabled);
         }
-
-        /*
-        public void StepFrame()
-        {
-            int cycles = 0;
-            while (cycles < CyclesPerFrame)
-            {
-                int executed = Cpu.ExecuteInstruction();
-                cycles += executed;
-                Ppu.Step(executed);
-                Timer.Step(executed);
-                Apu.Step(executed);
-            }
-        }
-        */
 
         public void StepFrame()
         {

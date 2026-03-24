@@ -62,72 +62,6 @@ namespace BRCCodeDmg
             //TryBootEmulator();
             RenderNow();
         }
-
-        /*
-        public override void OnAppEnable()
-        {
-            base.OnAppEnable();
-
-            // Force BepInEx to re-read the .cfg file
-            CodeDmgPlugin.Instance.Config.Reload();
-            CodeDmgPlugin.ConfigSettings = new CodeDmgConfig(CodeDmgPlugin.Instance.Config);
-
-            CodeDmgState.AppActive      = true;
-            GBEmuCurrentState.AppActive = true;
-            FlushCurrentPlayerInput();
-
-            _emulationTimeAccumulator = 0f;
-
-            if (_renderer == null)
-            {
-                _renderer = new CodeDmgRenderer(this);
-                _renderer.Build();
-            }
-
-            if (_audioDriver != null)
-                _audioDriver.SetMuted(false);
-
-            // ── Step 1: Check whether the configured ROM has changed ──────────
-            string configuredRom = GetConfiguredRomPath();
-            bool romChanged = _emulator != null &&
-                  !string.Equals(
-                      Path.GetFullPath(configuredRom),
-                      Path.GetFullPath(_loadedRomPath ?? string.Empty),
-                      StringComparison.OrdinalIgnoreCase);
-
-            if (romChanged)
-            {
-                Debug.Log("[CODE-DMG] ROM change detected — rebooting: " + configuredRom);
-
-                // Save the outgoing session before tearing it down.
-                if (ReadBoolFromConfig("SaveStates", "AutoSaveOnClose", true))
-                    SaveState();
-                if (ReadBoolFromConfig("SaveStates", "BatterySaveAutoSave", true))
-                    _emulator.SaveRam();
-
-                _emulator      = null;
-                _loadedRomPath = null;
-            }
-
-            // ── Step 2: Boot the emulator if we don't have one running ────────
-            if (_emulator == null)
-                TryBootEmulator();
-
-            // Step 3: Load save state — only after the correct ROM is confirmed running,
-            // and only if the user has auto-load enabled.
-            bool autoLoad = ReadBoolFromConfig("SaveStates", "AutoLoadOnOpen", true);
-
-            if (_emulator != null && autoLoad)
-            {
-                string statePath = GetStatePath(_loadedRomPath);
-                if (File.Exists(statePath))
-                    TryLoadState();
-            }
-
-            RenderNow();
-        }
-        */
-
         public override void OnAppEnable()
         {
             base.OnAppEnable();
@@ -180,28 +114,6 @@ namespace BRCCodeDmg
             RenderNow();
         }
 
-        /*
-        public override void OnAppDisable()
-        {
-            base.OnAppDisable();
-            CodeDmgPlugin.Instance.Config.Reload();
-
-            if (_audioDriver != null)
-                _audioDriver.SetMuted(true);
-
-            CodeDmgState.AppActive      = false;
-            GBEmuCurrentState.AppActive = false;
-            FlushCurrentPlayerInput();
-
-            if (_emulator != null)
-            {
-                if (CodeDmgPlugin.ConfigSettings?.AutoSaveOnClose.Value ?? true)
-                    SaveState();
-                if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoSave.Value ?? true)
-                    _emulator.SaveRam();
-            }
-        }
-        */
 
         public override void OnAppDisable()
         {
@@ -264,37 +176,6 @@ namespace BRCCodeDmg
         }
 
         // ── Boot ──────────────────────────────────────────────────────────────
-        /*
-        private void TryBootEmulator()
-        {
-            string romPath     = GetConfiguredRomPath();
-            string bootRomPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
-            string savePath    = GetBatterySavePath(romPath);
-
-            if (!File.Exists(romPath))
-            {
-                Debug.LogWarning("[CODE-DMG] Missing ROM: " + romPath);
-                _emulator      = null;
-                _loadedRomPath = null;
-                return;
-            }
-
-            _emulator      = new CodeDmgEmulator(romPath, bootRomPath, savePath);
-            _loadedRomPath = romPath;
-
-            // Battery save — gated by config.
-            if (ReadBoolFromConfig("SaveStates", "BatterySaveAutoLoad", true))
-                _emulator.LoadSaveRam();
-
-            if (CodeDmgPlugin.ConfigSettings != null)
-                _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
-            else
-                _emulator.SetAudioEnabled(false);
-
-            if (_audioDriver != null)
-                _audioDriver.SetEmulator(_emulator);
-        }
-        */
 
         private void TryBootEmulator()
         {

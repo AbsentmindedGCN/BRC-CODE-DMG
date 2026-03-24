@@ -2,23 +2,6 @@ using System;
 using System.IO;
 using UnityEngine;
 
-// =============================================================================
-//  MMU — Memory Management Unit (DMG + GBC)
-//
-//  Key changes vs. original:
-//   • Auto-detects GBC mode from cartridge header byte 0x0143.
-//   • Dual VRAM banks (FF4F / VBK).  Bank 0 = vram[], Bank 1 = vramBank1[].
-//   • 8 × 4 KB WRAM banks (FF70 / SVBK).  Bank 0 fixed at 0xC000, banks 1–7
-//     switchable at 0xD000.  wram[] is now 32 KB to hold all eight banks.
-//   • CGB BG palette registers FF68 (BCPS) / FF69 (BCPD), 8 palettes × 4 colors.
-//   • CGB OBJ palette registers FF6A (OCPS) / FF6B (OCPD), same layout.
-//   • HDMA registers FF51–FF55:  General DMA executes immediately; H-Blank DMA
-//     is stepped one 16-byte block per HBlank by the PPU calling ExecuteHBlankDMA().
-//   • KEY1 (FF4D) acknowledged so the speed-switch write does not lock up games.
-//   • ReadVramDirect / GetCGBBgColor / GetCGBObjColor exposed for the PPU.
-//   • SaveStateVersion bumped to 2 – old saves are intentionally incompatible.
-// =============================================================================
-
 public class MMU
 {
     // -------------------------------------------------------------------------

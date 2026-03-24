@@ -2,12 +2,6 @@ using System;
 using System.IO;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX (Minor): ClockDivApu previously incremented the frame sequencer step
-// BEFORE checking which components to clock. This meant step 0 (which should
-// clock the length counter on the very first frame sequencer event after APU
-// power-on) was never executed first — the channel would be clocked at step 1
-// instead.
-//
 // Pan Docs frame sequencer schedule:
 //   Step 0 : Length counter
 //   Step 1 : (nothing)
@@ -112,12 +106,6 @@ public sealed class APU
     {
         if ((mmu.NR52 & 0x80) == 0)
             return;
-
-        // ── FIX: evaluate the current step FIRST, then advance. ──────────────
-        // The old code did (step++, then check), which meant the first event
-        // after power-on fired step 1 behaviour (nothing) instead of step 0
-        // (length counter clock).
-        // ─────────────────────────────────────────────────────────────────────
 
         // Steps 0, 2, 4, 6 → clock length counters (256 Hz)
         if ((frameSequencerStep & 1) == 0)

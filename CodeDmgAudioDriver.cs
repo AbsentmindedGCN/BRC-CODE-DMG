@@ -41,18 +41,7 @@ namespace BRCCodeDmg
             _muted = muted;
         }
 
-        // ── FIX: Removed the "force mono" workaround. ──────────────────────────
-        // The previous code mixed left + right into a single mono signal to paper
-        // over channels that seemed to disappear. The root cause of that problem
-        // was the APU frame sequencer running 256× too fast (Timer.cs bit-4 bug),
-        // which caused length counters to expire almost instantly and made channels
-        // sound absent. Now that the timing is correct, proper stereo output is
-        // restored: the left APU output goes to the left speaker/headphone channel
-        // and the right APU output goes to the right.
-        //
-        // If Unity reports a mono output device (channels == 1) we downmix
-        // gracefully to keep things working on speakers that don't support stereo.
-        // ─────────────────────────────────────────────────────────────────────────
+        // Force Mono Workaround
         private void OnAudioFilterRead(float[] data, int channels)
         {
             for (int i = 0; i < data.Length; i++)
