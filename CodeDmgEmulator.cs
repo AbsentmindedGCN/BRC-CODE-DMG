@@ -11,7 +11,8 @@ namespace BRCCodeDmg
 
         // Bumped from 1 → 2 because MMU layout expanded for GBC support
         // (dual VRAM banks, 8×WRAM banks, CGB palette data, HDMA state).
-        private const int SaveStateVersion = 2;
+        // Bumped to 3 for RTC support
+        private const int SaveStateVersion = 3;
 
         private MMU    Mmu    { get; }
         private CPU    Cpu    { get; }
