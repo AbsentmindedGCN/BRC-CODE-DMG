@@ -40,7 +40,7 @@ public class Timer
         divCounter = 0;
         mmu.DIV = 0;
 
-        // FIX: Same bit-12 falling-edge check for the APU on a forced DIV reset.
+        // Same bit-12 falling-edge check for the APU on a forced DIV reset.
         if ((oldDiv & (1 << 12)) != 0)
             apu.ClockDivApu();
 

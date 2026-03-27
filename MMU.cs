@@ -371,6 +371,19 @@ public class MMU
             case 0xFF26:
                 return Apu != null ? Apu.ReadRegister(address) : io[address - 0xFF00];
 
+            case 0xFF15:
+            case 0xFF1F:
+            case 0xFF27:
+            case 0xFF28:
+            case 0xFF29:
+            case 0xFF2A:
+            case 0xFF2B:
+            case 0xFF2C:
+            case 0xFF2D:
+            case 0xFF2E:
+            case 0xFF2F:
+                return 0xFF;
+
             case 0xFF40: return LCDC;
             case 0xFF41: return STAT;
             case 0xFF42: return SCY;
@@ -511,6 +524,19 @@ public class MMU
             case 0xFF26:
                 // Let APU own write acceptance/rejection so powered-off CGB semantics match hardware.
                 Apu?.WriteRegister(address, value);
+                return;
+
+            case 0xFF15:
+            case 0xFF1F:
+            case 0xFF27:
+            case 0xFF28:
+            case 0xFF29:
+            case 0xFF2A:
+            case 0xFF2B:
+            case 0xFF2C:
+            case 0xFF2D:
+            case 0xFF2E:
+            case 0xFF2F:
                 return;
 
             case 0xFF40:

@@ -130,6 +130,10 @@ public sealed class APU
 
     public byte ReadRegister(ushort address)
     {
+        // When the APU is powered off, reads still go through the normal register
+        // read masks; the registers themselves were cleared by power-off, but they
+        // do not all read back as literal 0x00. Wave RAM remains readable, and NR52
+        // reports only bit 7 plus the constant 0x70.
         switch (address)
         {
             case 0xFF10: return (byte)(ch1.NR10 | 0x80);
