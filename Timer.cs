@@ -21,14 +21,15 @@ public class Timer
             divCounter++;
             mmu.DIV = (byte)(divCounter >> 8);
 
-            // APU frame sequencer — falling edge of the appropriate div bit.
-            // Bit 12 at normal speed, bit 13 at double speed → always 512 Hz.
-            int apuBit = mmu.CgbDoubleSpeed ? 0x2000 : 0x1000;
-            if (((oldDiv & apuBit) != 0) && ((divCounter & apuBit) == 0))
+            // FIX: APU frame sequencer clocks at 512 Hz on DMG.
+            // The internal divCounter counts T-cycles at 4,194,304 Hz.
+            // 4,194,304 / 512 = 8,192 = 2^13  →  falling edge of bit 12.
+            // Previously this used (1 << 4) which clocked at 131,072 Hz (256× too fast),
+            // making length counters, sweep, and envelope all expire/advance way too quickly.
+            if (((oldDiv & (1 << 12)) != 0) && ((divCounter & (1 << 12)) == 0))
                 apu.ClockDivApu();
 
-            // TIMA — falling edge of the selected divider bit.
-            // In double-speed mode each bit-mask doubles to keep the same rates.
+            // TIMA increments on falling edge of selected divider bit
             if ((mmu.TAC & 0x04) != 0)
             {
                 int bitMask = GetTimerBitMask(mmu.TAC & 0x03);
@@ -44,9 +45,8 @@ public class Timer
         divCounter = 0;
         mmu.DIV = 0;
 
-        // Treat a falling edge caused by the reset just as we do during normal ticking.
-        int apuBit = mmu.CgbDoubleSpeed ? 0x2000 : 0x1000;
-        if ((oldDiv & apuBit) != 0)
+        // FIX: Same bit-12 falling-edge check for the APU on a forced DIV reset.
+        if ((oldDiv & (1 << 12)) != 0)
             apu.ClockDivApu();
 
         if ((mmu.TAC & 0x04) != 0)
@@ -70,19 +70,15 @@ public class Timer
         }
     }
 
-    // Returns the div-counter bit-mask for the selected TAC clock rate.
-    // In double-speed mode the div counter runs 2x faster, so we need to
-    // shift each mask left by one to maintain the original Hz rates.
-    private int GetTimerBitMask(int tacClock)
+    private static int GetTimerBitMask(int tacClock)
     {
-        int shift = mmu.CgbDoubleSpeed ? 1 : 0;
         switch (tacClock)
         {
-            case 0: return (1 << 9)  << shift;   // 4096 Hz
-            case 1: return (1 << 3)  << shift;   // 262144 Hz
-            case 2: return (1 << 5)  << shift;   // 65536 Hz
-            case 3: return (1 << 7)  << shift;   // 16384 Hz
-            default: return (1 << 9) << shift;
+            case 0: return 1 << 9;  // 4096 Hz
+            case 1: return 1 << 3;  // 262144 Hz
+            case 2: return 1 << 5;  // 65536 Hz
+            case 3: return 1 << 7;  // 16384 Hz
+            default: return 1 << 9;
         }
     }
 

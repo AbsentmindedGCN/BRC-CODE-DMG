@@ -13,7 +13,6 @@ public sealed class SquareChannel
     private readonly bool hasSweep;
 
     public bool Enabled { get; private set; }
-
     public byte NR10 { get; private set; }
     public byte NR11 { get; private set; }
     public byte NR12 { get; private set; }
@@ -25,11 +24,14 @@ public sealed class SquareChannel
     private int lengthCounter;
     private int volume;
     private int envelopeTimer;
-
     private int sweepTimer;
     private int shadowFrequency;
     private bool sweepEnabled;
     private bool sweepNegateUsed;
+
+    // FIX: Track whether the most recent trigger reloaded the length counter from 0.
+    // APU.WriteRegister uses this to apply the extra-length-clock obscure behavior.
+    public bool LengthWasZeroOnTrigger { get; private set; }
 
     public bool DacEnabled => (NR12 & 0xF8) != 0;
 
@@ -45,7 +47,10 @@ public sealed class SquareChannel
         NR10 = NR11 = NR12 = NR13 = NR14 = 0;
         timer = 0;
         dutyStep = 0;
-        lengthCounter = 0;
+        // FIX: Do NOT reset lengthCounter here.
+        // On DMG hardware, powering the APU off does not clear the length counters;
+        // they retain their values and can still be updated by NR11/NR21 writes while off.
+        // (The old code set lengthCounter = 0, causing test 08 "len ctr during power" to fail.)
         volume = 0;
         envelopeTimer = 0;
         sweepTimer = 0;
@@ -59,16 +64,16 @@ public sealed class SquareChannel
         dutyStep = 0;
     }
 
-    // ── Register writes ───────────────────────────────────────────────────────
-
     public void WriteNR10(byte value)
     {
         if (!hasSweep)
             return;
+
         bool oldNegate = (NR10 & 0x08) != 0;
         bool newNegate = (value & 0x08) != 0;
         if (oldNegate && !newNegate && sweepNegateUsed)
             Enabled = false;
+
         NR10 = value;
     }
 
@@ -97,12 +102,11 @@ public sealed class SquareChannel
             Trigger();
     }
 
-    // ── Clocking ──────────────────────────────────────────────────────────────
-
-    // FIX: No early-return guard on Enabled. The frequency timer ticks
-    // continuously on real hardware regardless of channel enabled state.
     public void StepTimer(int tCycles)
     {
+        if (!Enabled)
+            return;
+
         timer -= tCycles;
         while (timer <= 0)
         {
@@ -113,8 +117,26 @@ public sealed class SquareChannel
 
     public void ClockLength()
     {
-        if (!Enabled || (NR14 & 0x40) == 0)
+        // FIX: Remove the "!Enabled" guard that was here.
+        // The length counter must tick even when the channel has been disabled by
+        // other means (e.g. DAC off), so that its value stays accurate for trigger
+        // interactions and the "length ctr during power" tests.
+        if ((NR14 & 0x40) == 0)
             return;
+
+        if (lengthCounter > 0)
+        {
+            lengthCounter--;
+            if (lengthCounter == 0)
+                Enabled = false;
+        }
+    }
+
+    // FIX: Public method for APU to apply the extra-length-clock obscure behavior.
+    // Called from APU.WriteRegister after an NRx4 write under specific frame sequencer
+    // conditions (see APU.cs for the full explanation).
+    public void ExtraLengthClock()
+    {
         if (lengthCounter > 0)
         {
             lengthCounter--;
@@ -137,9 +159,16 @@ public sealed class SquareChannel
             return;
 
         envelopeTimer = pace;
+
         bool increase = (NR12 & 0x08) != 0;
-        if (increase) { if (volume < 15) volume++; }
-        else          { if (volume > 0)  volume--; }
+        if (increase)
+        {
+            if (volume < 15) volume++;
+        }
+        else
+        {
+            if (volume > 0) volume--;
+        }
     }
 
     public void ClockSweep()
@@ -185,50 +214,50 @@ public sealed class SquareChannel
         return negate ? shadowFrequency - delta : shadowFrequency + delta;
     }
 
-    // ── Output ────────────────────────────────────────────────────────────────
-
     public int GetDigitalOutput()
     {
         if (!Enabled || !DacEnabled)
             return 0;
+
         int duty = (NR11 >> 6) & 0x03;
         int bit  = DutyTable[duty][dutyStep];
         return bit != 0 ? volume : 0;
     }
 
-    // ── Trigger ───────────────────────────────────────────────────────────────
-
     private void Trigger()
     {
+        // Record whether the length counter was 0 before we (potentially) reload it.
+        LengthWasZeroOnTrigger = (lengthCounter == 0);
+
         if (!DacEnabled)
         {
             Enabled = false;
             return;
         }
+
         Enabled = true;
 
         if (lengthCounter == 0)
             lengthCounter = 64;
 
-        volume = (NR12 >> 4) & 0x0F;
-
+        volume      = (NR12 >> 4) & 0x0F;
         int envPeriod = NR12 & 0x07;
         envelopeTimer = (envPeriod == 0) ? 8 : envPeriod;
 
-        // Reload the frequency timer. The low 2 bits of the old timer value are
-        // preserved by hardware (they carry over from the running timer).
-        int low2 = timer & 0x03;
-        timer = GetPeriod() | low2;
+        // FIX: Reload the frequency timer to its full period on trigger.
+        // The old code did "timer = GetPeriod() | low2" which preserved the
+        // low two bits of the old timer value — this is NOT a documented DMG
+        // quirk and produced incorrect pitch on retrigger.
+        timer = GetPeriod();
 
         if (hasSweep)
         {
             shadowFrequency = GetFrequency();
             int pace = (NR10 >> 4) & 0x07;
-            sweepTimer = (pace == 0) ? 8 : pace;
+            sweepTimer   = (pace == 0) ? 8 : pace;
             sweepEnabled = pace != 0 || (NR10 & 0x07) != 0;
             sweepNegateUsed = false;
 
-            // Overflow check on trigger
             if ((NR10 & 0x07) != 0 && CalculateSweepFrequency() > 2047)
                 Enabled = false;
         }
@@ -243,8 +272,6 @@ public sealed class SquareChannel
     {
         return (2048 - GetFrequency()) * 4;
     }
-
-    // ── State ─────────────────────────────────────────────────────────────────
 
     public void SaveState(BinaryWriter writer)
     {

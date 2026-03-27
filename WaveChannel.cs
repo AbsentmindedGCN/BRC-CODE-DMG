@@ -3,7 +3,6 @@ using System.IO;
 public sealed class WaveChannel
 {
     public bool Enabled { get; private set; }
-
     public byte NR30 { get; private set; }
     public byte NR31 { get; private set; }
     public byte NR32 { get; private set; }
@@ -14,8 +13,11 @@ public sealed class WaveChannel
 
     private int timer;
     private int lengthCounter;
-    private int sampleIndex;   // 0..31, points to most recently fetched nibble
-    private int sampleBuffer;  // currently latched 4-bit sample
+    private int sampleIndex;  // 0..31, most recently fetched nibble position
+    private int sampleBuffer; // currently latched 4-bit sample
+
+    // FIX: Track whether the most recent trigger reloaded the length counter from 0.
+    public bool LengthWasZeroOnTrigger { get; private set; }
 
     public bool DacEnabled => (NR30 & 0x80) != 0;
 
@@ -24,29 +26,31 @@ public sealed class WaveChannel
         Enabled = false;
         NR30 = NR31 = NR32 = NR33 = NR34 = 0;
         timer = 0;
-        lengthCounter = 0;
-        sampleIndex = 0;
+        // FIX: Do NOT reset lengthCounter — DMG hardware preserves length counters
+        // across APU power-off.  Clearing it here caused test 08 failures.
+        sampleIndex  = 0;
         sampleBuffer = 0;
-
-        for (int i = 0; i < waveRam.Length; i++)
-            waveRam[i] = 0;
+        // FIX: Do NOT zero wave RAM here.  On DMG, wave RAM is preserved when the
+        // APU is powered off; the test suite writes specific patterns before cycling
+        // power and expects them to survive.  (The old loop wiped them out, causing
+        // "regs after power" test 11 to fail at the wave-RAM sub-test.)
     }
 
     public void ResetAfterPowerOn()
     {
-        Enabled = false;
-        timer = 0;
-        lengthCounter = 0;
-        sampleIndex = 0;
-        sampleBuffer = 0; // buffer cleared only when powering APU on
+        Enabled      = false;
+        timer        = 0;
+        // FIX: Do not reset lengthCounter or wave RAM on power-on either.
+        sampleIndex  = 0;
+        sampleBuffer = 0;
     }
 
     public void Reset()
     {
-        Enabled = false;
-        timer = 0;
+        Enabled      = false;
+        timer        = 0;
         lengthCounter = 0;
-        sampleIndex = 0;
+        sampleIndex  = 0;
         sampleBuffer = 0;
     }
 
@@ -65,8 +69,6 @@ public sealed class WaveChannel
 
     public void WriteNR32(byte value)
     {
-        // Output level control only changes how the buffered digital value is shifted.
-        // It must not touch timer, position, or buffer.
         NR32 = value;
     }
 
@@ -78,20 +80,39 @@ public sealed class WaveChannel
     public void WriteNR34(byte value)
     {
         NR34 = value;
-
         if ((value & 0x80) != 0)
             Trigger();
     }
 
+    // FIX: DMG "write while on" quirk (blargg test 12).
+    // On DMG, when the wave channel is active, any write to the wave RAM region is
+    // silently redirected to the byte at the current playback position regardless of
+    // the address supplied by the CPU.  When the channel is off, writes behave normally.
     public void WriteWaveRam(ushort address, byte value)
     {
-        int index = address - 0xFF30;
-        if ((uint)index < 16)
-            waveRam[index] = value;
+        if (Enabled)
+        {
+            // Redirect to currently playing byte.
+            waveRam[(sampleIndex >> 1) & 0x0F] = value;
+        }
+        else
+        {
+            int index = address - 0xFF30;
+            if ((uint)index < 16)
+                waveRam[index] = value;
+        }
     }
 
+    // FIX: DMG "read while on" quirk (blargg test 09).
+    // On DMG, reading any wave RAM address while the channel is active returns the byte
+    // at the current playback position, not the byte at the requested address.
+    // (On CGB the behaviour is different — reads return 0xFF — but this targets DMG.)
     public byte ReadWaveRam(ushort address)
     {
+        if (Enabled)
+        {
+            return waveRam[(sampleIndex >> 1) & 0x0F];
+        }
         int index = address - 0xFF30;
         if ((uint)index < 16)
             return waveRam[index];
@@ -104,23 +125,36 @@ public sealed class WaveChannel
             return;
 
         timer -= tCycles;
-
         while (timer <= 0)
         {
             timer += (2048 - GetFrequency()) * 2;
 
-            // Pan Docs behavior:
-            // sample index increments, then the corresponding nibble is fetched.
-            sampleIndex = (sampleIndex + 1) & 31;
+            // Increment first, then latch the nibble at the new position.
+            sampleIndex  = (sampleIndex + 1) & 31;
             sampleBuffer = ReadSampleNibble(sampleIndex);
         }
     }
 
     public void ClockLength()
     {
-        if (!Enabled || (NR34 & 0x40) == 0)
+        // FIX: Remove the "!Enabled" early-out.
+        // The length counter must be able to tick regardless of the channel's
+        // enabled state so its value stays correct for trigger interactions and
+        // the "len ctr during power" tests.
+        if ((NR34 & 0x40) == 0)
             return;
 
+        if (lengthCounter > 0)
+        {
+            lengthCounter--;
+            if (lengthCounter == 0)
+                Enabled = false;
+        }
+    }
+
+    // FIX: Public method for APU to apply the extra-length-clock obscure behavior.
+    public void ExtraLengthClock()
+    {
         if (lengthCounter > 0)
         {
             lengthCounter--;
@@ -135,26 +169,33 @@ public sealed class WaveChannel
             return 0;
 
         int volumeCode = (NR32 >> 5) & 0x03;
-        int sample = sampleBuffer & 0x0F;
+        int sample     = sampleBuffer & 0x0F;
 
-        // Output level shifts the digital sample, not the analog output.
         switch (volumeCode)
         {
-            case 0:
-                return 0;            // mute
-            case 1:
-                return sample;       // 100%
-            case 2:
-                return sample >> 1;  // 50%
-            case 3:
-                return sample >> 2;  // 25%
-            default:
-                return 0;
+            case 0: return 0;          // mute
+            case 1: return sample;     // 100%
+            case 2: return sample >> 1; // 50%
+            case 3: return sample >> 2; // 25%
+            default: return 0;
         }
     }
 
     private void Trigger()
     {
+        // FIX: DMG "trigger while on" wave RAM corruption (blargg test 10).
+        // On the real DMG, when the wave channel is re-triggered while it is already
+        // playing, within the next two T-cycles the hardware reads the wave RAM byte
+        // at the current playback position and writes it back to wave RAM[0].  This
+        // overwrites the first byte of wave RAM with whatever nibbles were playing.
+        // Timing accuracy here is not cycle-perfect but is sufficient for the test.
+        if (Enabled)
+        {
+            waveRam[0] = waveRam[(sampleIndex >> 1) & 0x0F];
+        }
+
+        LengthWasZeroOnTrigger = (lengthCounter == 0);
+
         if (!DacEnabled)
         {
             Enabled = false;
@@ -166,15 +207,14 @@ public sealed class WaveChannel
         if (lengthCounter == 0)
             lengthCounter = 256;
 
-        // Restart timer.
+        // Reload timer.
         timer = (2048 - GetFrequency()) * 2;
 
-        // Pan Docs / gbdev wiki behavior:
-        // - sample index resets to 0
-        // - sample buffer is NOT refilled on trigger
-        // - previous buffered sample continues briefly
-        // - next fetched sample is sample #1, so sample #0 is skipped until wraparound
+        // Reset sample position.  StepTimer increments before reading, so the first
+        // sample output after a trigger will come from nibble index 1 (nibble 0 is
+        // skipped until the position wraps around).
         sampleIndex = 0;
+        // Leave sampleBuffer as-is; it reflects whatever was playing before trigger.
     }
 
     private int GetFrequency()
@@ -206,20 +246,19 @@ public sealed class WaveChannel
 
     public void LoadState(BinaryReader reader)
     {
-        Enabled = reader.ReadBoolean();
-        NR30 = reader.ReadByte();
-        NR31 = reader.ReadByte();
-        NR32 = reader.ReadByte();
-        NR33 = reader.ReadByte();
-        NR34 = reader.ReadByte();
-        timer = reader.ReadInt32();
+        Enabled      = reader.ReadBoolean();
+        NR30         = reader.ReadByte();
+        NR31         = reader.ReadByte();
+        NR32         = reader.ReadByte();
+        NR33         = reader.ReadByte();
+        NR34         = reader.ReadByte();
+        timer        = reader.ReadInt32();
         lengthCounter = reader.ReadInt32();
-        sampleIndex = reader.ReadInt32();
+        sampleIndex  = reader.ReadInt32();
         sampleBuffer = reader.ReadInt32();
 
-        int len = reader.ReadInt32();
+        int len    = reader.ReadInt32();
         byte[] data = reader.ReadBytes(len);
-
         for (int i = 0; i < waveRam.Length; i++)
             waveRam[i] = i < data.Length ? data[i] : (byte)0;
     }
