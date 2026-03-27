@@ -29,9 +29,8 @@ public sealed class SquareChannel
     private bool sweepEnabled;
     private bool sweepNegateUsed;
 
-    // FIX: Track whether the most recent trigger reloaded the length counter from 0.
-    // APU.WriteRegister uses this to apply the extra-length-clock obscure behavior.
     public bool LengthWasZeroOnTrigger { get; private set; }
+    public int LengthCounter => lengthCounter;
 
     public bool DacEnabled => (NR12 & 0xF8) != 0;
 
@@ -47,16 +46,30 @@ public sealed class SquareChannel
         NR10 = NR11 = NR12 = NR13 = NR14 = 0;
         timer = 0;
         dutyStep = 0;
-        // FIX: Do NOT reset lengthCounter here.
-        // On DMG hardware, powering the APU off does not clear the length counters;
-        // they retain their values and can still be updated by NR11/NR21 writes while off.
-        // (The old code set lengthCounter = 0, causing test 08 "len ctr during power" to fail.)
         volume = 0;
         envelopeTimer = 0;
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
         sweepNegateUsed = false;
+        // DMG preserves the length counters across APU power off.
+        // CGB reset-on-power-on is handled by ResetAfterPowerOn().
+    }
+
+    public void ResetAfterPowerOn(bool isCgbMode)
+    {
+        Enabled = false;
+        timer = 0;
+        dutyStep = 0;
+        volume = 0;
+        envelopeTimer = 0;
+        sweepTimer = 0;
+        shadowFrequency = 0;
+        sweepEnabled = false;
+        sweepNegateUsed = false;
+
+        if (isCgbMode)
+            lengthCounter = 0;
     }
 
     public void ResetDutyStep()
@@ -80,6 +93,11 @@ public sealed class SquareChannel
     public void WriteNR11(byte value)
     {
         NR11 = value;
+        lengthCounter = 64 - (value & 0x3F);
+    }
+
+    public void WriteLengthOnly(byte value)
+    {
         lengthCounter = 64 - (value & 0x3F);
     }
 
@@ -117,10 +135,6 @@ public sealed class SquareChannel
 
     public void ClockLength()
     {
-        // FIX: Remove the "!Enabled" guard that was here.
-        // The length counter must tick even when the channel has been disabled by
-        // other means (e.g. DAC off), so that its value stays accurate for trigger
-        // interactions and the "length ctr during power" tests.
         if ((NR14 & 0x40) == 0)
             return;
 
@@ -132,9 +146,6 @@ public sealed class SquareChannel
         }
     }
 
-    // FIX: Public method for APU to apply the extra-length-clock obscure behavior.
-    // Called from APU.WriteRegister after an NRx4 write under specific frame sequencer
-    // conditions (see APU.cs for the full explanation).
     public void ExtraLengthClock()
     {
         if (lengthCounter > 0)
@@ -220,41 +231,31 @@ public sealed class SquareChannel
             return 0;
 
         int duty = (NR11 >> 6) & 0x03;
-        int bit  = DutyTable[duty][dutyStep];
+        int bit = DutyTable[duty][dutyStep];
         return bit != 0 ? volume : 0;
     }
 
     private void Trigger()
     {
-        // Record whether the length counter was 0 before we (potentially) reload it.
         LengthWasZeroOnTrigger = (lengthCounter == 0);
-
-        if (!DacEnabled)
-        {
-            Enabled = false;
-            return;
-        }
-
-        Enabled = true;
 
         if (lengthCounter == 0)
             lengthCounter = 64;
 
-        volume      = (NR12 >> 4) & 0x0F;
+        volume = (NR12 >> 4) & 0x0F;
         int envPeriod = NR12 & 0x07;
         envelopeTimer = (envPeriod == 0) ? 8 : envPeriod;
 
-        // FIX: Reload the frequency timer to its full period on trigger.
-        // The old code did "timer = GetPeriod() | low2" which preserved the
-        // low two bits of the old timer value — this is NOT a documented DMG
-        // quirk and produced incorrect pitch on retrigger.
-        timer = GetPeriod();
+        // Hardware preserves the low 2 bits of the pulse timer on trigger.
+        timer = GetPeriod() | (timer & 0x03);
+
+        Enabled = DacEnabled;
 
         if (hasSweep)
         {
             shadowFrequency = GetFrequency();
             int pace = (NR10 >> 4) & 0x07;
-            sweepTimer   = (pace == 0) ? 8 : pace;
+            sweepTimer = (pace == 0) ? 8 : pace;
             sweepEnabled = pace != 0 || (NR10 & 0x07) != 0;
             sweepNegateUsed = false;
 
@@ -294,20 +295,20 @@ public sealed class SquareChannel
 
     public void LoadState(BinaryReader reader)
     {
-        Enabled         = reader.ReadBoolean();
-        NR10            = reader.ReadByte();
-        NR11            = reader.ReadByte();
-        NR12            = reader.ReadByte();
-        NR13            = reader.ReadByte();
-        NR14            = reader.ReadByte();
-        timer           = reader.ReadInt32();
-        dutyStep        = reader.ReadInt32();
-        lengthCounter   = reader.ReadInt32();
-        volume          = reader.ReadInt32();
-        envelopeTimer   = reader.ReadInt32();
-        sweepTimer      = reader.ReadInt32();
+        Enabled = reader.ReadBoolean();
+        NR10 = reader.ReadByte();
+        NR11 = reader.ReadByte();
+        NR12 = reader.ReadByte();
+        NR13 = reader.ReadByte();
+        NR14 = reader.ReadByte();
+        timer = reader.ReadInt32();
+        dutyStep = reader.ReadInt32();
+        lengthCounter = reader.ReadInt32();
+        volume = reader.ReadInt32();
+        envelopeTimer = reader.ReadInt32();
+        sweepTimer = reader.ReadInt32();
         shadowFrequency = reader.ReadInt32();
-        sweepEnabled    = reader.ReadBoolean();
+        sweepEnabled = reader.ReadBoolean();
         sweepNegateUsed = reader.ReadBoolean();
     }
 }

@@ -13,10 +13,7 @@ public sealed class APU
     private readonly WaveChannel ch3;
     private readonly NoiseChannel ch4;
 
-    // FIX: The frame sequencer step now uses a "check-THEN-increment" model
-    // so that step 0 fires a length clock on the very first DIV edge after power-on.
-    // The old pre-increment model caused the first length clock to be missed,
-    // shifting the entire frame sequencer schedule by one period (≈2 ms).
+    // frame sequencer must check then increment
     private int frameSequencerStep;
 
     private double sampleCycleCounter;
@@ -40,10 +37,9 @@ public sealed class APU
         this.sampleRate = sampleRate > 0 ? sampleRate : 48000;
         ch1 = new SquareChannel(true);
         ch2 = new SquareChannel(false);
-        ch3 = new WaveChannel();
+        ch3 = new WaveChannel(mmu.IsCGBMode);
         ch4 = new NoiseChannel();
 
-        // Pan Docs DMG factor adjusted to output sample rate
         hpfChargeFactor = Math.Pow(0.999958, (double)CpuClock / this.sampleRate);
     }
 
@@ -96,11 +92,6 @@ public sealed class APU
         if ((mmu.NR52 & 0x80) == 0)
             return;
 
-        // FIX: "Check then increment" — hardware fires components at the CURRENT step,
-        // then advances.  The old code incremented first, which meant step 0 (a length
-        // clock) was never executed after a power-on reset (the first real clock ended
-        // up at step 1 which does nothing), offsetting all timing by one period.
-        //
         // Frame sequencer schedule (512 Hz, 8 steps):
         //   Step 0: Length
         //   Step 1: (nothing)
@@ -188,19 +179,18 @@ public sealed class APU
 
         if (!apuOn)
         {
-            // On DMG, when the APU is powered off:
-            //   - Wave RAM is always accessible.
-            //   - Length counter registers are still writable (DMG-specific).
-            //   - All other registers are blocked.
             if (address >= 0xFF30 && address <= 0xFF3F)
                 ch3.WriteWaveRam(address, value);
 
-            switch (address)
+            if (!mmu.IsCGBMode)
             {
-                case 0xFF11: ch1.WriteNR11(value); break;
-                case 0xFF16: ch2.WriteNR11(value); break;
-                case 0xFF1B: ch3.WriteNR31(value); break;
-                case 0xFF20: ch4.WriteNR41(value); break;
+                switch (address)
+                {
+                    case 0xFF11: ch1.WriteLengthOnly(value); break;
+                    case 0xFF16: ch2.WriteLengthOnly(value); break;
+                    case 0xFF1B: ch3.WriteLengthOnly(value); break;
+                    case 0xFF20: ch4.WriteLengthOnly(value); break;
+                }
             }
             return;
         }
@@ -214,34 +204,18 @@ public sealed class APU
 
             case 0xFF14:
             {
-                // FIX: Extra-length-clock obscure behavior on NRx4 writes.
-                //
-                // Two hardware quirks are emulated here:
-                //
-                // (A) Trigger + length enable, length counter was 0:
-                //     After the trigger reloads the counter from 0→64, if the frame
-                //     sequencer's NEXT step is odd (won't clock length), the freshly
-                //     loaded counter is immediately decremented by one.
-                //
-                // (B) Enabling length counter without triggering (bit 6: 0→1):
-                //     If the next step is odd (won't clock length), one extra clock fires.
-                //
-                // "Next step" = current value of frameSequencerStep (because we already
-                // incremented it at the end of ClockDivApu).  Odd values (1,3,5,7) do
-                // NOT clock length, so the extra clock compensates.
                 bool prevLenEnabled = (ch1.NR14 & 0x40) != 0;
                 bool newLenEnabled  = (value  & 0x40) != 0;
                 bool trigger        = (value  & 0x80) != 0;
+                bool oddStep        = (frameSequencerStep & 1) == 1;
+
+                if (oddStep && !prevLenEnabled && newLenEnabled && ch1.LengthCounter > 0)
+                    ch1.ExtraLengthClock();
 
                 ch1.WriteNR14(value);
 
-                if (newLenEnabled && (frameSequencerStep & 1) == 1)
-                {
-                    if (trigger && ch1.LengthWasZeroOnTrigger)
-                        ch1.ExtraLengthClock();
-                    else if (!trigger && !prevLenEnabled)
-                        ch1.ExtraLengthClock();
-                }
+                if (oddStep && trigger && newLenEnabled && ch1.LengthWasZeroOnTrigger)
+                    ch1.ExtraLengthClock();
                 break;
             }
 
@@ -254,16 +228,15 @@ public sealed class APU
                 bool prevLenEnabled = (ch2.NR14 & 0x40) != 0;
                 bool newLenEnabled  = (value  & 0x40) != 0;
                 bool trigger        = (value  & 0x80) != 0;
+                bool oddStep        = (frameSequencerStep & 1) == 1;
+
+                if (oddStep && !prevLenEnabled && newLenEnabled && ch2.LengthCounter > 0)
+                    ch2.ExtraLengthClock();
 
                 ch2.WriteNR14(value);
 
-                if (newLenEnabled && (frameSequencerStep & 1) == 1)
-                {
-                    if (trigger && ch2.LengthWasZeroOnTrigger)
-                        ch2.ExtraLengthClock();
-                    else if (!trigger && !prevLenEnabled)
-                        ch2.ExtraLengthClock();
-                }
+                if (oddStep && trigger && newLenEnabled && ch2.LengthWasZeroOnTrigger)
+                    ch2.ExtraLengthClock();
                 break;
             }
 
@@ -277,16 +250,15 @@ public sealed class APU
                 bool prevLenEnabled = (ch3.NR34 & 0x40) != 0;
                 bool newLenEnabled  = (value  & 0x40) != 0;
                 bool trigger        = (value  & 0x80) != 0;
+                bool oddStep        = (frameSequencerStep & 1) == 1;
+
+                if (oddStep && !prevLenEnabled && newLenEnabled && ch3.LengthCounter > 0)
+                    ch3.ExtraLengthClock();
 
                 ch3.WriteNR34(value);
 
-                if (newLenEnabled && (frameSequencerStep & 1) == 1)
-                {
-                    if (trigger && ch3.LengthWasZeroOnTrigger)
-                        ch3.ExtraLengthClock();
-                    else if (!trigger && !prevLenEnabled)
-                        ch3.ExtraLengthClock();
-                }
+                if (oddStep && trigger && newLenEnabled && ch3.LengthWasZeroOnTrigger)
+                    ch3.ExtraLengthClock();
                 break;
             }
 
@@ -299,16 +271,15 @@ public sealed class APU
                 bool prevLenEnabled = (ch4.NR44 & 0x40) != 0;
                 bool newLenEnabled  = (value  & 0x40) != 0;
                 bool trigger        = (value  & 0x80) != 0;
+                bool oddStep        = (frameSequencerStep & 1) == 1;
+
+                if (oddStep && !prevLenEnabled && newLenEnabled && ch4.LengthCounter > 0)
+                    ch4.ExtraLengthClock();
 
                 ch4.WriteNR44(value);
 
-                if (newLenEnabled && (frameSequencerStep & 1) == 1)
-                {
-                    if (trigger && ch4.LengthWasZeroOnTrigger)
-                        ch4.ExtraLengthClock();
-                    else if (!trigger && !prevLenEnabled)
-                        ch4.ExtraLengthClock();
-                }
+                if (oddStep && trigger && newLenEnabled && ch4.LengthWasZeroOnTrigger)
+                    ch4.ExtraLengthClock();
                 break;
             }
 
@@ -327,13 +298,11 @@ public sealed class APU
         bool newEnabled = (value & 0x80) != 0;
         bool oldEnabled = (mmu.NR52 & 0x80) != 0;
 
-        if (!newEnabled)
+        if (!newEnabled && oldEnabled)
         {
             mmu.NR52 = 0x00;
             mmu.NR50 = 0x00;
             mmu.NR51 = 0x00;
-            // FIX: Reset frame sequencer to 0 so the very first clock after power-on
-            // will fire step 0 (a length step).
             frameSequencerStep = 0;
             ch1.PowerOff();
             ch2.PowerOff();
@@ -342,15 +311,14 @@ public sealed class APU
             capacitorL = 0.0;
             capacitorR = 0.0;
         }
-        else if (!oldEnabled)
+        else if (newEnabled && !oldEnabled)
         {
             mmu.NR52 = 0x80;
-            // FIX: Same — start at step 0 so the first clock is a length clock.
             frameSequencerStep = 0;
-            ch1.ResetDutyStep();
-            ch2.ResetDutyStep();
-            ch3.ResetAfterPowerOn();
-            ch4.Reset();
+            ch1.ResetAfterPowerOn(mmu.IsCGBMode);
+            ch2.ResetAfterPowerOn(mmu.IsCGBMode);
+            ch3.ResetAfterPowerOn(mmu.IsCGBMode);
+            ch4.ResetAfterPowerOn(mmu.IsCGBMode);
             capacitorL = 0.0;
             capacitorR = 0.0;
         }

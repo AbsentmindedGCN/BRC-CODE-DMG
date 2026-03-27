@@ -74,15 +74,6 @@ namespace BRCCodeDmg
             _screenImage.color = Color.white;
             _screenImage.raycastTarget = false;
 
-            /*
-            _screenTexture = new Texture2D(TexWidth, TexHeight, TextureFormat.RGBA32, false, false);
-            _screenTexture.filterMode = FilterMode.Point;
-            _screenTexture.wrapMode = TextureWrapMode.Clamp;
-            _screenImage.texture = _screenTexture;
-
-            _blitBuffer = new Color32[TexWidth * TexHeight];
-            */
-
             _screenTexture = new Texture2D(GbWidth, GbHeight, TextureFormat.RGBA32, false, false);
             _screenTexture.filterMode = FilterMode.Point; // GPU handles 6× scaling
             _screenTexture.wrapMode = TextureWrapMode.Clamp;
@@ -91,20 +82,16 @@ namespace BRCCodeDmg
             _blitBuffer = new Color32[GbWidth * GbHeight];
             ClearTexture();
 
-            // --- Grid Overlay (The Fix) ---
             var gridGo = new GameObject("GridOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
             var gridRect = gridGo.GetComponent<RectTransform>();
 
-            // Parent to screenGo so they stay perfectly aligned
             gridRect.SetParent(screenRect, false);
 
-            // Anchors to 0,0 and 1,1 forces it to match the parent size perfectly
             gridRect.anchorMin = Vector2.zero;
             gridRect.anchorMax = Vector2.one;
             gridRect.offsetMin = Vector2.zero;
             gridRect.offsetMax = Vector2.zero;
 
-            // Fix: Move slightly forward on Z to ensure it's not inside/behind the screen texture
             gridRect.localPosition = new Vector3(0, 0, -1f);
             gridRect.localScale = Vector3.one;
 
@@ -113,7 +100,6 @@ namespace BRCCodeDmg
             _gridOverlay.uvRect = new Rect(0, 0, GbWidth, GbHeight);
             _gridOverlay.raycastTarget = false;
 
-            // Make sure it starts visible if the config says so
             _gridOverlay.enabled = CodeDmgPlugin.ConfigSettings?.PixelGrid.Value ?? false;
 
             CreateLogo(_rootRect.sizeDelta.x, _rootRect.sizeDelta.y);
@@ -126,20 +112,16 @@ namespace BRCCodeDmg
             // 16x16 resolution for smooth downsampling
             int size = 16;
 
-            // Enable Mipmaps (true) to prevent moiré/checkerboarding
             var tex = new Texture2D(size, size, TextureFormat.RGBA32, true);
             tex.filterMode = FilterMode.Bilinear;
             tex.wrapMode = TextureWrapMode.Repeat;
 
             Color32 clear = new Color32(0, 0, 0, 0);
 
-            // CRITICAL CHANGE: Increased alpha to 220 for a much darker/stronger grid.
-            // (255 is fully black, 0 is invisible)
             Color32 line = new Color32(0, 0, 0, 240);
 
             Color32[] pixels = new Color32[size * size];
 
-            // CRITICAL CHANGE: Increased thickness to 3 for wider, more visible "pixel gaps"
             int lineThickness = 4; //3
 
             for (int y = 0; y < size; y++)
@@ -187,28 +169,6 @@ namespace BRCCodeDmg
             emulator.Ppu.ClearDirtyFlag();
         }
 
-        /*
-        private static void UpscaleAndBlit(Color32[] src, Color32[] dst)
-        {
-            for (int gbY = 0; gbY < GbHeight; gbY++)
-            {
-                int srcRow = gbY * GbWidth;
-                int dstRowBase = (GbHeight - 1 - gbY) * Scale * TexWidth;
-                for (int gbX = 0; gbX < GbWidth; gbX++)
-                {
-                    Color32 pixel = src[srcRow + gbX];
-                    int dstColBase = gbX * Scale;
-                    for (int dy = 0; dy < Scale; dy++)
-                    {
-                        int dstRow = dstRowBase + dy * TexWidth;
-                        for (int dx = 0; dx < Scale; dx++)
-                            dst[dstRow + dstColBase + dx] = pixel;
-                    }
-                }
-            }
-        }
-        */
-
         private static void FlipRowsForUnity(Color32[] source, Color32[] dest)
         {
             for (int y = 0; y < GbHeight; y++)
@@ -243,30 +203,6 @@ namespace BRCCodeDmg
             _screenTexture.SetPixels32(_blitBuffer);
             _screenTexture.Apply(false, false);
         }
-        /*
-        private void CreateLogo(float screenWidth, float screenHeight)
-        {
-            string logoPath = System.IO.Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "microboylogo.png");
-            if (!System.IO.File.Exists(logoPath)) return;
-            byte[] bytes = System.IO.File.ReadAllBytes(logoPath);
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, false);
-            if (!ImageConversion.LoadImage(tex, bytes, false)) return;
-
-            float logoW = screenWidth * 0.8f;
-            float logoH = logoW * ((float)tex.height / tex.width);
-            float centerY = -(screenHeight * 0.5f) - 128f - (logoH * 0.5f); //-28
-
-            var go = new GameObject("MicroBoyLogo", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
-            var rect = go.GetComponent<RectTransform>();
-            rect.SetParent(_rootRect, false);
-            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(0f, centerY);
-            rect.sizeDelta = new Vector2(logoW, logoH);
-            _logoImage = go.GetComponent<RawImage>();
-            _logoImage.texture = tex;
-            _logoImage.raycastTarget = false;
-        }
-        */
 
         private void CreateLogo(float screenWidth, float screenHeight)
         {
@@ -281,8 +217,6 @@ namespace BRCCodeDmg
             tex.wrapMode = TextureWrapMode.Clamp;
             if (!ImageConversion.LoadImage(tex, bytes, false)) return;
 
-            // --- SIZE RESTORATION ---
-            // Bumped back up to 70% of screen width. Change to 0.8f for even bigger.
             float logoW = screenWidth * 0.7f;
             float logoH = logoW * ((float)tex.height / tex.width);
 
@@ -290,17 +224,11 @@ namespace BRCCodeDmg
             var rect = go.GetComponent<RectTransform>();
             rect.SetParent(_rootRect, false);
 
-            // --- POSITIONING (Bottom-Left) ---
-            // Anchors at (0,0) = Bottom Left of the game screen container
             rect.anchorMin = Vector2.zero;
             rect.anchorMax = Vector2.zero;
-
-            // Pivot at (0,1) means the "handle" is the Top-Left of the logo
             rect.pivot = new Vector2(0f, 1f);
-
-            // Offset to give it some breathing room from the edges
             float paddingX = 5f;
-            float paddingY = -15f; // Moves it 15 pixels below the screen
+            float paddingY = -15f;
 
             rect.anchoredPosition = new Vector2(paddingX, paddingY);
             rect.sizeDelta = new Vector2(logoW, logoH);
@@ -330,8 +258,7 @@ namespace BRCCodeDmg
             }
 
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, false);
-            // Using Point filtering for logos with sharp edges/stripes is often best.
-            // Change to Bilinear if the lines look jagged when scaled.
+
             tex.filterMode = FilterMode.Point;
             tex.wrapMode = TextureWrapMode.Clamp;
 
@@ -341,15 +268,10 @@ namespace BRCCodeDmg
                 return;
             }
 
-            // Keep the text banner matching the screen width.
             float logoW = screenWidth;
-            // Calculate proportional height based on the aspect ratio of toplogo.png.
             float logoH = logoW * ((float)tex.height / tex.width);
 
-            // --- POSITIONING ---
-            // A gap of 15f from the top edge of the screen to the bottom of the banner.
             float gap = 15f;
-            // We add these positive values to move upwards from the center.
             float centerY = (screenHeight * 0.5f) + gap + (logoH * 0.5f);
 
             var go = new GameObject("SkateMatrixLogo", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));

@@ -6,7 +6,7 @@ namespace BRCCodeDmg
 {
     public sealed class CodeDmgEmulator
     {
-        //private const int CyclesPerFrame = 70224;
+        // private const int CyclesPerFrame = 70224;
         private const int CyclesPerFrameNormal = 70224;
 
         // Bumped from 1 → 2 because MMU layout expanded for GBC support
@@ -14,12 +14,12 @@ namespace BRCCodeDmg
         // Bumped to 3 for RTC support
         private const int SaveStateVersion = 3;
 
-        private MMU    Mmu    { get; }
-        private CPU    Cpu    { get; }
-        public  PPU    Ppu    { get; }
-        public  APU    Apu    { get; }
+        private MMU Mmu { get; }
+        private CPU Cpu { get; }
+        public PPU Ppu { get; }
+        public APU Apu { get; }
         private Joypad Joypad { get; }
-        private Timer  Timer  { get; }
+        private Timer Timer { get; }
 
         public bool AudioEnabled { get; private set; } = false;
 
@@ -27,34 +27,34 @@ namespace BRCCodeDmg
         private readonly string _romPath;
         private readonly string _bootRomPath;
 
-        public string RomPath     => _romPath;
+        public string RomPath => _romPath;
         public string BootRomPath => _bootRomPath;
-        public string SavePath    => _savePath;
+        public string SavePath => _savePath;
 
         public bool FrameDirty => Ppu.FrameDirty;
 
         public CodeDmgEmulator(string romPath, string bootRomPath, string savePath)
         {
-            _romPath     = romPath;
+            _romPath = romPath;
             _bootRomPath = bootRomPath;
-            _savePath    = savePath;
+            _savePath = savePath;
 
             byte[] gameRom = File.ReadAllBytes(romPath);
             byte[] bootRom = File.Exists(bootRomPath) ? File.ReadAllBytes(bootRomPath) : new byte[256];
 
-            Helper.scale       = 1;
+            Helper.scale = 1;
             Helper.paletteName = "dmg";
 
             // MMU auto-detects GBC mode from cartridge header byte 0x143
             // (0x80 = GBC-compatible, 0xC0 = GBC-only)
-            Mmu    = new MMU(gameRom, bootRom, false);
-            Cpu    = new CPU(Mmu);
-            Ppu    = new PPU(Mmu);
+            Mmu = new MMU(gameRom, bootRom, false);
+            Cpu = new CPU(Mmu);
+            Ppu = new PPU(Mmu);
             Joypad = new Joypad(Mmu);
-            Apu    = new APU(Mmu, UnityEngine.AudioSettings.outputSampleRate);
-            Timer  = new Timer(Mmu, Apu);
+            Apu = new APU(Mmu, UnityEngine.AudioSettings.outputSampleRate);
+            Timer = new Timer(Mmu, Apu);
 
-            Mmu.Apu   = Apu;
+            Mmu.Apu = Apu;
             Mmu.Timer = Timer;
 
             if (!File.Exists(bootRomPath))
@@ -117,7 +117,7 @@ namespace BRCCodeDmg
             using (BinaryWriter writer = new BinaryWriter(ms))
             {
                 writer.Write(SaveStateVersion);
-                writer.Write(_romPath     ?? string.Empty);
+                writer.Write(_romPath ?? string.Empty);
                 writer.Write(_bootRomPath ?? string.Empty);
                 Mmu.SaveState(writer);
                 Cpu.SaveState(writer);
@@ -139,7 +139,7 @@ namespace BRCCodeDmg
                 if (version != SaveStateVersion)
                     throw new InvalidOperationException("Unsupported savestate version: " + version);
 
-                string savedRomPath     = reader.ReadString();
+                string savedRomPath = reader.ReadString();
                 string savedBootRomPath = reader.ReadString();
 
                 if (!string.Equals(savedRomPath ?? string.Empty, _romPath ?? string.Empty, StringComparison.OrdinalIgnoreCase))

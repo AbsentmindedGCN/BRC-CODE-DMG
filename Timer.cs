@@ -21,11 +21,6 @@ public class Timer
             divCounter++;
             mmu.DIV = (byte)(divCounter >> 8);
 
-            // FIX: APU frame sequencer clocks at 512 Hz on DMG.
-            // The internal divCounter counts T-cycles at 4,194,304 Hz.
-            // 4,194,304 / 512 = 8,192 = 2^13  →  falling edge of bit 12.
-            // Previously this used (1 << 4) which clocked at 131,072 Hz (256× too fast),
-            // making length counters, sweep, and envelope all expire/advance way too quickly.
             if (((oldDiv & (1 << 12)) != 0) && ((divCounter & (1 << 12)) == 0))
                 apu.ClockDivApu();
 

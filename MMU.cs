@@ -472,8 +472,8 @@ public class MMU
 
         if (address >= 0xFF30 && address <= 0xFF3F)
         {
+            // APU owns Wave RAM behavior, including power-off and active-access quirks.
             Apu?.WriteRegister(address, value);
-            io[address - 0xFF00] = value;
             return;
         }
 
@@ -509,8 +509,8 @@ public class MMU
             case 0xFF24:
             case 0xFF25:
             case 0xFF26:
+                // Let APU own write acceptance/rejection so powered-off CGB semantics match hardware.
                 Apu?.WriteRegister(address, value);
-                io[address - 0xFF00] = value;
                 return;
 
             case 0xFF40:
