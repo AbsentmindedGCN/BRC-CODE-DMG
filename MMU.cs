@@ -225,6 +225,32 @@ public class MMU
         }
     }
 
+    private void CompleteSerialTransfer(byte receivedByte = 0xFF)
+    {
+        // Dummy out Link Cable
+        io[0x01] = receivedByte;
+
+        // Clear the transfer-start bit at end of transfer, but preserve the selected clock bit (bit 0).
+        io[0x02] = (byte)((io[0x02] & 0x01) | 0x7C);
+        IF |= 0x08;
+    }
+
+    private void BeginSerialTransfer(byte controlValue)
+    {
+        // Store only the documented writable bits. Bits 1-6 are unused on DMG and generally read back as 1.
+        io[0x02] = (byte)((controlValue & 0x83) | 0x7C);
+
+        // No transfer requested.
+        if ((controlValue & 0x80) == 0)
+            return;
+
+        // Dummy out Link Cable
+        if ((controlValue & 0x01) == 0)
+            return;
+
+        CompleteSerialTransfer(0xFF);
+    }
+
     // =========================================================================
     // MBC / Save
     // =========================================================================
@@ -342,6 +368,8 @@ public class MMU
                 if ((JOYP & 0x20) == 0) return (byte)((joypadState & 0x0F) | 0x10);
                 return (byte)(JOYP | 0xFF);
 
+            case 0xFF01: return io[0x01];
+            case 0xFF02: return (byte)(io[0x02] | 0x7C);
             case 0xFF04: return DIV;
             case 0xFF05: return TIMA;
             case 0xFF06: return TMA;
@@ -493,6 +521,14 @@ public class MMU
         switch (address)
         {
             case 0xFF00: JOYP = (byte)(value & 0x30); return;
+
+            case 0xFF01:
+                io[0x01] = value;
+                return;
+
+            case 0xFF02:
+                BeginSerialTransfer(value);
+                return;
 
             case 0xFF04: Timer?.ResetDiv(); if (Timer == null) DIV = 0; return;
             case 0xFF05: TIMA = value; return;
