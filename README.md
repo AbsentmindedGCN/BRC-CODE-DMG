@@ -5,7 +5,7 @@ Comes with the open-source homebrew game, [Tobu Tobu Girl DX](https://tangramgam
 ![Game Boy Emulator](https://github.com/AbsentmindedGCN/BRC-CODE-DMG/blob/main/Other/gb-emu.jpg?raw=true)
 
 ## Features
-- Full (though definitely inaccurate) GB experience within BRC
+- Full GB/GBC experience within BRC
 - SGB/GBC Compatibility
 - Auto Save and Auto Load, letting you quickly resume games
 - Ability to remap controls and add a pixel grid filter
