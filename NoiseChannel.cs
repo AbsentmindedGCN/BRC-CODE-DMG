@@ -12,11 +12,11 @@ public sealed class NoiseChannel
     private int lengthCounter;
     private int volume;
     private int envelopeTimer;
+    private bool envelopeEnabled;
     private ushort lfsr;
 
     public bool LengthWasZeroOnTrigger { get; private set; }
     public int LengthCounter => lengthCounter;
-
     public bool DacEnabled => (NR42 & 0xF8) != 0;
 
     public void PowerOff()
@@ -26,8 +26,8 @@ public sealed class NoiseChannel
         timer = 0;
         volume = 0;
         envelopeTimer = 0;
+        envelopeEnabled = false;
         lfsr = 0x7FFF;
-        // DMG preserves length across APU power off.
     }
 
     public void ResetAfterPowerOn(bool isCgbMode)
@@ -36,6 +36,7 @@ public sealed class NoiseChannel
         timer = 0;
         volume = 0;
         envelopeTimer = 0;
+        envelopeEnabled = false;
         lfsr = 0x7FFF;
 
         if (isCgbMode)
@@ -49,6 +50,7 @@ public sealed class NoiseChannel
         lengthCounter = 0;
         volume = 0;
         envelopeTimer = 0;
+        envelopeEnabled = false;
         lfsr = 0x7FFF;
     }
 
@@ -65,9 +67,14 @@ public sealed class NoiseChannel
 
     public void WriteNR42(byte value)
     {
+        byte old = NR42;
         NR42 = value;
+
         if (!DacEnabled)
             Enabled = false;
+
+        if (Enabled)
+            ApplyZombieEnvelopeWrite(old, value);
     }
 
     public void WriteNR43(byte value)
@@ -133,28 +140,32 @@ public sealed class NoiseChannel
 
     public void ClockEnvelope()
     {
-        if (!Enabled)
-            return;
-
-        int pace = NR42 & 0x07;
-        if (pace == 0)
+        if (!Enabled || !envelopeEnabled)
             return;
 
         envelopeTimer--;
         if (envelopeTimer > 0)
             return;
 
-        envelopeTimer = pace;
+        envelopeTimer = GetEnvelopePeriod();
 
         bool increase = (NR42 & 0x08) != 0;
-        if (increase)
+        int newVolume = increase ? (volume + 1) : (volume - 1);
+
+        if (newVolume >= 0 && newVolume <= 15)
         {
-            if (volume < 15) volume++;
+            volume = newVolume;
         }
         else
         {
-            if (volume > 0) volume--;
+            envelopeEnabled = false;
         }
+    }
+
+    public void DelayEnvelopeTimerForObscureTrigger()
+    {
+        if (envelopeTimer > 0)
+            envelopeTimer++;
     }
 
     public int GetDigitalOutput()
@@ -167,19 +178,36 @@ public sealed class NoiseChannel
 
     private void Trigger()
     {
-        LengthWasZeroOnTrigger = (lengthCounter == 0);
-
+        LengthWasZeroOnTrigger = lengthCounter == 0;
         if (lengthCounter == 0)
             lengthCounter = 64;
 
         volume = (NR42 >> 4) & 0x0F;
-        envelopeTimer = NR42 & 0x07;
-        if (envelopeTimer == 0)
-            envelopeTimer = 8;
-
+        envelopeTimer = GetEnvelopePeriod();
+        envelopeEnabled = true;
         lfsr = 0x7FFF;
         timer = GetNoisePeriod();
         Enabled = DacEnabled;
+    }
+
+    private void ApplyZombieEnvelopeWrite(byte oldValue, byte newValue)
+    {
+        int oldPeriod = oldValue & 0x07;
+        bool oldSubtract = (oldValue & 0x08) == 0;
+        bool oldAdd = !oldSubtract;
+        bool newAdd = (newValue & 0x08) != 0;
+
+        int newVolume = volume;
+
+        if (oldPeriod == 0 && envelopeEnabled)
+            newVolume++;
+        else if (oldSubtract)
+            newVolume += 2;
+
+        if (oldAdd != newAdd)
+            newVolume = 16 - newVolume;
+
+        volume = newVolume & 0x0F;
     }
 
     private int GetNoisePeriod()
@@ -207,6 +235,12 @@ public sealed class NoiseChannel
         return divisor << shift;
     }
 
+    private int GetEnvelopePeriod()
+    {
+        int period = NR42 & 0x07;
+        return period == 0 ? 8 : period;
+    }
+
     public void SaveState(BinaryWriter writer)
     {
         writer.Write(Enabled);
@@ -218,6 +252,7 @@ public sealed class NoiseChannel
         writer.Write(lengthCounter);
         writer.Write(volume);
         writer.Write(envelopeTimer);
+        writer.Write(envelopeEnabled);
         writer.Write(lfsr);
     }
 
@@ -232,6 +267,7 @@ public sealed class NoiseChannel
         lengthCounter = reader.ReadInt32();
         volume = reader.ReadInt32();
         envelopeTimer = reader.ReadInt32();
+        envelopeEnabled = reader.ReadBoolean();
         lfsr = reader.ReadUInt16();
     }
 }

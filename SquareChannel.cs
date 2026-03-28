@@ -4,10 +4,10 @@ public sealed class SquareChannel
 {
     private static readonly byte[][] DutyTable =
     {
-        new byte[] { 0,0,0,0,0,0,0,1 }, // 12.5%
-        new byte[] { 1,0,0,0,0,0,0,1 }, // 25%
-        new byte[] { 1,0,0,0,0,1,1,1 }, // 50%
-        new byte[] { 0,1,1,1,1,1,1,0 }  // 75%
+        new byte[] { 0, 0, 0, 0, 0, 0, 0, 1 }, // 12.5%
+        new byte[] { 1, 0, 0, 0, 0, 0, 0, 1 }, // 25%
+        new byte[] { 1, 0, 0, 0, 0, 1, 1, 1 }, // 50%
+        new byte[] { 0, 1, 1, 1, 1, 1, 1, 0 }, // 75%
     };
 
     private readonly bool hasSweep;
@@ -24,6 +24,8 @@ public sealed class SquareChannel
     private int lengthCounter;
     private int volume;
     private int envelopeTimer;
+    private bool envelopeEnabled;
+
     private int sweepTimer;
     private int shadowFrequency;
     private bool sweepEnabled;
@@ -31,7 +33,6 @@ public sealed class SquareChannel
 
     public bool LengthWasZeroOnTrigger { get; private set; }
     public int LengthCounter => lengthCounter;
-
     public bool DacEnabled => (NR12 & 0xF8) != 0;
 
     public SquareChannel(bool hasSweep)
@@ -48,12 +49,11 @@ public sealed class SquareChannel
         dutyStep = 0;
         volume = 0;
         envelopeTimer = 0;
+        envelopeEnabled = false;
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
         sweepNegateUsed = false;
-        // DMG preserves the length counters across APU power off.
-        // CGB reset-on-power-on is handled by ResetAfterPowerOn().
     }
 
     public void ResetAfterPowerOn(bool isCgbMode)
@@ -63,6 +63,7 @@ public sealed class SquareChannel
         dutyStep = 0;
         volume = 0;
         envelopeTimer = 0;
+        envelopeEnabled = false;
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
@@ -103,9 +104,15 @@ public sealed class SquareChannel
 
     public void WriteNR12(byte value)
     {
+        byte old = NR12;
         NR12 = value;
+
         if (!DacEnabled)
             Enabled = false;
+
+        // zombie mode
+        if (Enabled)
+            ApplyZombieEnvelopeWrite(old, value);
     }
 
     public void WriteNR13(byte value)
@@ -158,42 +165,49 @@ public sealed class SquareChannel
 
     public void ClockEnvelope()
     {
-        if (!Enabled)
-            return;
-
-        int pace = NR12 & 0x07;
-        if (pace == 0)
+        if (!Enabled || !envelopeEnabled)
             return;
 
         envelopeTimer--;
         if (envelopeTimer > 0)
             return;
 
-        envelopeTimer = pace;
+        envelopeTimer = GetEnvelopePeriod();
 
         bool increase = (NR12 & 0x08) != 0;
-        if (increase)
+        int newVolume = increase ? (volume + 1) : (volume - 1);
+
+        if (newVolume >= 0 && newVolume <= 15)
         {
-            if (volume < 15) volume++;
+            volume = newVolume;
         }
         else
         {
-            if (volume > 0) volume--;
+            envelopeEnabled = false;
         }
+    }
+
+    public void DelayEnvelopeTimerForObscureTrigger()
+    {
+        if (envelopeTimer > 0)
+            envelopeTimer++;
     }
 
     public void ClockSweep()
     {
-        if (!hasSweep || !sweepEnabled || !Enabled)
+        if (!hasSweep || !Enabled)
             return;
 
-        int pace = (NR10 >> 4) & 0x07;
         sweepTimer--;
         if (sweepTimer > 0)
             return;
 
-        sweepTimer = (pace == 0) ? 8 : pace;
+        sweepTimer = GetSweepPeriod();
 
+        if (!sweepEnabled)
+            return;
+
+        int pace = (NR10 >> 4) & 0x07;
         if (pace == 0)
             return;
 
@@ -220,9 +234,11 @@ public sealed class SquareChannel
     {
         int delta = shadowFrequency >> (NR10 & 0x07);
         bool negate = (NR10 & 0x08) != 0;
+
         if (negate)
             sweepNegateUsed = true;
-        return negate ? shadowFrequency - delta : shadowFrequency + delta;
+
+        return negate ? (shadowFrequency - delta) : (shadowFrequency + delta);
     }
 
     public int GetDigitalOutput()
@@ -237,31 +253,48 @@ public sealed class SquareChannel
 
     private void Trigger()
     {
-        LengthWasZeroOnTrigger = (lengthCounter == 0);
-
+        LengthWasZeroOnTrigger = lengthCounter == 0;
         if (lengthCounter == 0)
             lengthCounter = 64;
 
         volume = (NR12 >> 4) & 0x0F;
-        int envPeriod = NR12 & 0x07;
-        envelopeTimer = (envPeriod == 0) ? 8 : envPeriod;
+        envelopeTimer = GetEnvelopePeriod();
+        envelopeEnabled = true;
 
-        // Hardware preserves the low 2 bits of the pulse timer on trigger.
+        // Hardware preserves the low 2 bits of the pulse timer on trigger
         timer = GetPeriod() | (timer & 0x03);
-
         Enabled = DacEnabled;
 
-        if (hasSweep)
-        {
-            shadowFrequency = GetFrequency();
-            int pace = (NR10 >> 4) & 0x07;
-            sweepTimer = (pace == 0) ? 8 : pace;
-            sweepEnabled = pace != 0 || (NR10 & 0x07) != 0;
-            sweepNegateUsed = false;
+        if (!hasSweep)
+            return;
 
-            if ((NR10 & 0x07) != 0 && CalculateSweepFrequency() > 2047)
-                Enabled = false;
-        }
+        shadowFrequency = GetFrequency();
+        sweepTimer = GetSweepPeriod();
+        sweepEnabled = (((NR10 >> 4) & 0x07) != 0) || ((NR10 & 0x07) != 0);
+        sweepNegateUsed = false;
+
+        if ((NR10 & 0x07) != 0 && CalculateSweepFrequency() > 2047)
+            Enabled = false;
+    }
+
+    private void ApplyZombieEnvelopeWrite(byte oldValue, byte newValue)
+    {
+        int oldPeriod = oldValue & 0x07;
+        bool oldSubtract = (oldValue & 0x08) == 0;
+        bool oldAdd = !oldSubtract;
+        bool newAdd = (newValue & 0x08) != 0;
+
+        int newVolume = volume;
+
+        if (oldPeriod == 0 && envelopeEnabled)
+            newVolume++;
+        else if (oldSubtract)
+            newVolume += 2;
+
+        if (oldAdd != newAdd)
+            newVolume = 16 - newVolume;
+
+        volume = newVolume & 0x0F;
     }
 
     private int GetFrequency()
@@ -272,6 +305,18 @@ public sealed class SquareChannel
     private int GetPeriod()
     {
         return (2048 - GetFrequency()) * 4;
+    }
+
+    private int GetEnvelopePeriod()
+    {
+        int period = NR12 & 0x07;
+        return period == 0 ? 8 : period;
+    }
+
+    private int GetSweepPeriod()
+    {
+        int period = (NR10 >> 4) & 0x07;
+        return period == 0 ? 8 : period;
     }
 
     public void SaveState(BinaryWriter writer)
@@ -287,6 +332,7 @@ public sealed class SquareChannel
         writer.Write(lengthCounter);
         writer.Write(volume);
         writer.Write(envelopeTimer);
+        writer.Write(envelopeEnabled);
         writer.Write(sweepTimer);
         writer.Write(shadowFrequency);
         writer.Write(sweepEnabled);
@@ -306,6 +352,7 @@ public sealed class SquareChannel
         lengthCounter = reader.ReadInt32();
         volume = reader.ReadInt32();
         envelopeTimer = reader.ReadInt32();
+        envelopeEnabled = reader.ReadBoolean();
         sweepTimer = reader.ReadInt32();
         shadowFrequency = reader.ReadInt32();
         sweepEnabled = reader.ReadBoolean();
