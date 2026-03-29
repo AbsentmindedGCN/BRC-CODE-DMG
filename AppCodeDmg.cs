@@ -85,13 +85,12 @@ namespace BRCCodeDmg
                 _audioDriver.SetMuted(false);
 
             string configuredRom = GetConfiguredRomPath();
-            _loadedRomPath = configuredRom;
+            string loadedRom = NormalizeConfiguredRomPath(_loadedRomPath ?? string.Empty);
 
-            bool romChanged = _emulator != null &&
-                !string.Equals(
-                    Path.GetFullPath(configuredRom),
-                    Path.GetFullPath(_emulator.RomPath),
-                    StringComparison.OrdinalIgnoreCase);
+            bool romChanged = _emulator != null && !string.Equals(
+                Path.GetFullPath(configuredRom),
+                Path.GetFullPath(loadedRom),
+                StringComparison.OrdinalIgnoreCase);
 
             if (romChanged)
             {
@@ -332,16 +331,59 @@ namespace BRCCodeDmg
             if (CodeDmgPlugin.ConfigSettings != null)
             {
                 string configured = CodeDmgPlugin.ConfigSettings.RomPath.Value;
-                if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+                string normalized = NormalizeConfiguredRomPath(configured);
+
+                // If normalization fixed the path, write it back so the config self-heals.
+                if (!string.Equals(configured, normalized, StringComparison.Ordinal))
                 {
-                    string ext = Path.GetExtension(configured).ToLowerInvariant();
-                    if (ext == ".gb" || ext == ".gbc") return configured;
+                    CodeDmgPlugin.ConfigSettings.RomPath.Value = normalized;
+                    try
+                    {
+                        CodeDmgPlugin.Instance.Config.Save();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning("[CODE-DMG] Failed to save normalized RomPath: " + ex.Message);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(normalized) && File.Exists(normalized))
+                {
+                    string ext = Path.GetExtension(normalized).ToLowerInvariant();
+                    if (ext == ".gb" || ext == ".gbc")
+                        return normalized;
                 }
             }
 
             string gbcPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "rom.gbc");
-            if (File.Exists(gbcPath)) return gbcPath;
+            if (File.Exists(gbcPath))
+                return gbcPath;
+
             return Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "rom.gb");
+        }
+
+        private static string NormalizeConfiguredRomPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            string normalized = path.Trim();
+
+            // Fix escaped apostrophes written as \'
+            normalized = normalized.Replace("\\'", "'");
+
+            // Fix escaped quotes just in case
+            normalized = normalized.Replace("\\\"", "\"");
+
+            // If the config stored the whole path wrapped in quotes, remove them
+            if (normalized.Length >= 2 &&
+                normalized[0] == '"' &&
+                normalized[normalized.Length - 1] == '"')
+            {
+                normalized = normalized.Substring(1, normalized.Length - 2);
+            }
+
+            return normalized;
         }
 
         /// Config Reload

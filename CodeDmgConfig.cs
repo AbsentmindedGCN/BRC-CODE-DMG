@@ -120,7 +120,7 @@ namespace BRCCodeDmg
                 "AudioLatency",
                 "Normal",
                 new ConfigDescription(
-                    "Audio latency preset. Options: Very High (Prior Behavior), High, Normal, Low. The lower the value, the more chance for popping.",
+                    "Audio latency preset. The lower the value, the more chance for popping.",
                     new AcceptableValueList<string>("Very High", "High", "Normal", "Low")
                 )
             );

@@ -67,17 +67,11 @@ namespace BRCCodeDmg
 
                 Cpu.Reset(isGbc);
 
-                // When no boot ROM is present, real hardware would already have left the
-                // MMU/APU in a post-boot state. CPU.Reset() only handles CPU/video basics.
-                // CGB games that touch audio immediately can start from a bad APU state
-                // unless we also apply CGB post-boot audio defaults.
                 if (isGbc)
                 {
                     Mmu.InitializeCGBRegisters();
 
-                    // Re-sync the APU's internal state with the visible MMU audio registers.
-                    // InitializeCGBRegisters() writes MMU regs directly, but the APU channel
-                    // state machines must also see a proper power-on sequence.
+                    // Re-sync the APU
                     Mmu.NR52 = 0x00;
                     Apu.WriteRegister(0xFF26, 0x80);
                     Apu.WriteRegister(0xFF24, 0x77);
