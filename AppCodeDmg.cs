@@ -5,6 +5,9 @@ using CommonAPI;
 using CommonAPI.Phone;
 using Reptile;
 using UnityEngine;
+using System.Reflection;
+using UnityEngine.EventSystems;
+using TMPro;
 
 namespace BRCCodeDmg
 {
@@ -19,6 +22,10 @@ namespace BRCCodeDmg
 
         // Tracks which ROM is currently loaded so hot-swaps can be detected.
         private string _loadedRomPath;
+
+        // Chat fix
+        private static PropertyInfo _slopChatInputBlockedProperty;
+        private static bool _slopChatReflectionInitialized;
 
         public override bool Available => true;
 
@@ -448,6 +455,12 @@ namespace BRCCodeDmg
         {
             if (_emulator == null || CodeDmgPlugin.ConfigSettings == null) return;
 
+            if (IgnoreInputForChat())
+            {
+                ReleaseAllButtons();
+                return;
+            }
+
             CodeDmgConfig cfg = CodeDmgPlugin.ConfigSettings;
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
@@ -468,6 +481,80 @@ namespace BRCCodeDmg
                 Input.GetKey(cfg.Up.Value)    || v > 0.5f);
             _emulator.SetButton(GameBoyButton.Down,
                 Input.GetKey(cfg.Down.Value)  || v < -0.5f);
+        }
+
+        private bool IgnoreInputForChat()
+        {
+            if (TryGetSlopChatInputBlocked(out bool inputBlocked) && inputBlocked)
+                return true;
+
+            if (EventSystem.current != null)
+            {
+                var selected = EventSystem.current.currentSelectedGameObject;
+                if (selected != null)
+                {
+                    if (selected.GetComponent<TMP_InputField>() != null)
+                        return true;
+
+                    if (selected.GetComponent<UnityEngine.UI.InputField>() != null)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryGetSlopChatInputBlocked(out bool blocked)
+        {
+            blocked = false;
+
+            try
+            {
+                if (!_slopChatReflectionInitialized)
+                {
+                    _slopChatReflectionInitialized = true;
+
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        var type = assembly.GetType("SlopChat.InputUtils", false);
+                        if (type == null)
+                            continue;
+
+                        _slopChatInputBlockedProperty = type.GetProperty(
+                            "InputBlocked",
+                            BindingFlags.Public | BindingFlags.Static);
+                        break;
+                    }
+                }
+
+                if (_slopChatInputBlockedProperty == null)
+                    return false;
+
+                object value = _slopChatInputBlockedProperty.GetValue(null, null);
+                if (value is bool b)
+                {
+                    blocked = b;
+                    return true;
+                }
+            }
+            catch
+            {
+                // Ignore and fall back to normal input
+            }
+
+            return false;
+        }
+
+        private void ReleaseAllButtons()
+        {
+            _emulator.SetButton(GameBoyButton.A, false);
+            _emulator.SetButton(GameBoyButton.B, false);
+            _emulator.SetButton(GameBoyButton.Start, false);
+            _emulator.SetButton(GameBoyButton.Select, false);
+            _emulator.SetButton(GameBoyButton.Right, false);
+            _emulator.SetButton(GameBoyButton.Left, false);
+            _emulator.SetButton(GameBoyButton.Up, false);
+            _emulator.SetButton(GameBoyButton.Down, false);
         }
 
         private void RenderNow()  => _renderer?.Render(_emulator);
