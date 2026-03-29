@@ -9,6 +9,8 @@ namespace BRCCodeDmg
         private CodeDmgEmulator _emulator;
         private bool _muted = true;
         private float[] _stereoTemp = new float[0];
+        private float _lastLeft;
+        private float _lastRight;
 
         private void Awake()
         {
@@ -41,22 +43,10 @@ namespace BRCCodeDmg
             _muted = muted;
         }
 
-        // Force Mono Workaround
         private void OnAudioFilterRead(float[] data, int channels)
         {
-            for (int i = 0; i < data.Length; i++)
-                data[i] = 0f;
-
-            if (_muted || _emulator == null || _emulator.Apu == null || !_emulator.AudioEnabled)
-                return;
-
             if (channels <= 0)
                 return;
-
-            // Read volume from config (0-100), convert to 0.0-1.0 scale
-            float volume = 1f;
-            if (CodeDmgPlugin.ConfigSettings != null)
-                volume = Mathf.Clamp01(CodeDmgPlugin.ConfigSettings.Volume.Value / 100f);
 
             int frameCount = data.Length / channels;
             int stereoSamplesNeeded = frameCount * 2;
@@ -64,34 +54,81 @@ namespace BRCCodeDmg
             if (_stereoTemp.Length != stereoSamplesNeeded)
                 _stereoTemp = new float[stereoSamplesNeeded];
 
-            for (int i = 0; i < stereoSamplesNeeded; i++)
-                _stereoTemp[i] = 0f;
+            if (_muted || _emulator == null || _emulator.Apu == null || !_emulator.AudioEnabled)
+            {
+                // Do not hard-zero instantly
+                WriteHeldSamples(data, channels, frameCount, 0f);
+                return;
+            }
+
+            float volume = 1f;
+            if (CodeDmgPlugin.ConfigSettings != null)
+                volume = Mathf.Clamp01(CodeDmgPlugin.ConfigSettings.Volume.Value / 100f);
 
             int read = _emulator.Apu.ReadSamples(_stereoTemp, 0, stereoSamplesNeeded);
-            int framesRead = read / 2;
+
+            for (int i = read; i < stereoSamplesNeeded; i += 2)
+            {
+                _stereoTemp[i] = _lastLeft;
+                if (i + 1 < stereoSamplesNeeded)
+                    _stereoTemp[i + 1] = _lastRight;
+            }
+
+            if (stereoSamplesNeeded >= 2)
+            {
+                _lastLeft = _stereoTemp[stereoSamplesNeeded - 2];
+                _lastRight = _stereoTemp[stereoSamplesNeeded - 1];
+            }
 
             if (channels == 1)
             {
-                for (int frame = 0; frame < framesRead; frame++)
+                for (int frame = 0; frame < frameCount; frame++)
                 {
-                    float left  = _stereoTemp[frame * 2];
+                    float left = _stereoTemp[frame * 2];
                     float right = _stereoTemp[frame * 2 + 1];
                     data[frame] = (left + right) * 0.5f * volume;
                 }
             }
             else
             {
-                for (int frame = 0; frame < framesRead; frame++)
+                for (int frame = 0; frame < frameCount; frame++)
                 {
-                    float left  = _stereoTemp[frame * 2]  * volume;
+                    float left = _stereoTemp[frame * 2] * volume;
                     float right = _stereoTemp[frame * 2 + 1] * volume;
                     int baseIndex = frame * channels;
 
-                    data[baseIndex + 0] = left;
+                    data[baseIndex] = left;
                     data[baseIndex + 1] = right;
 
+                    float mono = (left + right) * 0.5f;
                     for (int c = 2; c < channels; c++)
-                        data[baseIndex + c] = (left + right) * 0.5f;
+                        data[baseIndex + c] = mono;
+                }
+            }
+        }
+
+        private void WriteHeldSamples(float[] data, int channels, int frameCount, float gain)
+        {
+            if (channels == 1)
+            {
+                float mono = (_lastLeft + _lastRight) * 0.5f * gain;
+                for (int i = 0; i < frameCount; i++)
+                    data[i] = mono;
+            }
+            else
+            {
+                float left = _lastLeft * gain;
+                float right = _lastRight * gain;
+
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    int baseIndex = frame * channels;
+                    data[baseIndex] = left;
+                    data[baseIndex + 1] = right;
+
+                    float mono = (left + right) * 0.5f;
+                    for (int c = 2; c < channels; c++)
+                        data[baseIndex + c] = mono;
                 }
             }
         }

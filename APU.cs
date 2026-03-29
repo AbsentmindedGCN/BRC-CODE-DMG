@@ -4,7 +4,11 @@ using System.IO;
 public sealed class APU
 {
     private const int CpuClock = 4194304;
-    private const int SampleFifoSize = 32768; // interleaved stereo floats
+    //private const int SampleFifoSize = 32768; // interleaved stereo floats
+    //private const int SampleFifoSize = 8192; // Latency improvement. 4096 and 2048 too low, causes popping
+
+    public const int DefaultSampleFifoSize = 8192;
+    private readonly float[] sampleFifo;
 
     private readonly MMU mmu;
     private readonly int sampleRate;
@@ -18,7 +22,7 @@ public sealed class APU
     private double sampleCycleCounter;
 
     private readonly object sampleLock = new object();
-    private readonly float[] sampleFifo = new float[SampleFifoSize];
+    //private readonly float[] sampleFifo = new float[SampleFifoSize];
     private int sampleReadIndex;
     private int sampleWriteIndex;
     private int sampleCount;
@@ -28,19 +32,36 @@ public sealed class APU
     private double capacitorR;
     private readonly double hpfChargeFactor;
 
+    private float lastLeftSample;
+    private float lastRightSample;
+
     private bool enabled = true;
 
-    public APU(MMU mmu, int sampleRate = 48000)
+    public int BufferedSamples
+    {
+        get { lock (sampleLock) return sampleCount; }
+    }
+
+    public int UnderrunCount { get; private set; }
+    public int OverflowDropCount { get; private set; }
+
+    public APU(MMU mmu, int sampleRate = 48000, int sampleFifoSize = DefaultSampleFifoSize)
     {
         this.mmu = mmu;
         this.sampleRate = sampleRate > 0 ? sampleRate : 48000;
+
+        if (sampleFifoSize <= 0)
+            sampleFifoSize = DefaultSampleFifoSize;
+
+        sampleFifo = new float[sampleFifoSize];
 
         ch1 = new SquareChannel(true);
         ch2 = new SquareChannel(false);
         ch3 = new WaveChannel(mmu.IsCGBMode);
         ch4 = new NoiseChannel();
 
-        hpfChargeFactor = Math.Pow(0.999958, (double)CpuClock / this.sampleRate);
+        double baseCoeff = mmu.IsCGBMode ? 0.998943 : 0.999958;
+        hpfChargeFactor = Math.Pow(baseCoeff, (double)CpuClock / this.sampleRate);
     }
 
     public void SetEnabled(bool enabled)
@@ -131,23 +152,19 @@ public sealed class APU
             case 0xFF12: return ch1.NR12;
             case 0xFF13: return 0xFF;
             case 0xFF14: return (byte)(ch1.NR14 | 0xBF);
-
             case 0xFF16: return (byte)(ch2.NR11 | 0x3F);
             case 0xFF17: return ch2.NR12;
             case 0xFF18: return 0xFF;
             case 0xFF19: return (byte)(ch2.NR14 | 0xBF);
-
             case 0xFF1A: return (byte)(ch3.NR30 | 0x7F);
             case 0xFF1B: return 0xFF;
             case 0xFF1C: return (byte)(ch3.NR32 | 0x9F);
             case 0xFF1D: return 0xFF;
             case 0xFF1E: return (byte)(ch3.NR34 | 0xBF);
-
             case 0xFF20: return 0xFF;
             case 0xFF21: return ch4.NR42;
             case 0xFF22: return ch4.NR43;
             case 0xFF23: return (byte)(ch4.NR44 | 0xBF);
-
             case 0xFF24: return mmu.NR50;
             case 0xFF25: return mmu.NR51;
             case 0xFF26:
@@ -157,11 +174,9 @@ public sealed class APU
                     (ch2.Enabled ? 0x02 : 0) |
                     (ch3.Enabled ? 0x04 : 0) |
                     (ch4.Enabled ? 0x08 : 0));
-
             default:
                 if (address >= 0xFF30 && address <= 0xFF3F)
                     return ch3.ReadWaveRam(address);
-
                 return 0xFF;
         }
     }
@@ -201,98 +216,98 @@ public sealed class APU
             case 0xFF12: ch1.WriteNR12(value); break;
             case 0xFF13: ch1.WriteNR13(value); break;
             case 0xFF14:
-            {
-                bool prevLenEnabled = (ch1.NR14 & 0x40) != 0;
-                bool newLenEnabled = (value & 0x40) != 0;
-                bool trigger = (value & 0x80) != 0;
-                bool oddStep = (frameSequencerStep & 1) == 1;
+                {
+                    bool prevLenEnabled = (ch1.NR14 & 0x40) != 0;
+                    bool newLenEnabled = (value & 0x40) != 0;
+                    bool trigger = (value & 0x80) != 0;
+                    bool oddStep = (frameSequencerStep & 1) == 1;
 
-                if (oddStep && !prevLenEnabled && newLenEnabled && ch1.LengthCounter > 0)
-                    ch1.ExtraLengthClock();
+                    if (oddStep && !prevLenEnabled && newLenEnabled && ch1.LengthCounter > 0)
+                        ch1.ExtraLengthClock();
 
-                ch1.WriteNR14(value);
+                    ch1.WriteNR14(value);
 
-                if (oddStep && trigger && newLenEnabled && ch1.LengthWasZeroOnTrigger)
-                    ch1.ExtraLengthClock();
+                    if (oddStep && trigger && newLenEnabled && ch1.LengthWasZeroOnTrigger)
+                        ch1.ExtraLengthClock();
 
-                if (trigger && frameSequencerStep == 7)
-                    ch1.DelayEnvelopeTimerForObscureTrigger();
+                    if (trigger && frameSequencerStep == 7)
+                        ch1.DelayEnvelopeTimerForObscureTrigger();
 
-                break;
-            }
+                    break;
+                }
 
             case 0xFF16: ch2.WriteNR11(value); break;
             case 0xFF17: ch2.WriteNR12(value); break;
             case 0xFF18: ch2.WriteNR13(value); break;
             case 0xFF19:
-            {
-                bool prevLenEnabled = (ch2.NR14 & 0x40) != 0;
-                bool newLenEnabled = (value & 0x40) != 0;
-                bool trigger = (value & 0x80) != 0;
-                bool oddStep = (frameSequencerStep & 1) == 1;
+                {
+                    bool prevLenEnabled = (ch2.NR14 & 0x40) != 0;
+                    bool newLenEnabled = (value & 0x40) != 0;
+                    bool trigger = (value & 0x80) != 0;
+                    bool oddStep = (frameSequencerStep & 1) == 1;
 
-                if (oddStep && !prevLenEnabled && newLenEnabled && ch2.LengthCounter > 0)
-                    ch2.ExtraLengthClock();
+                    if (oddStep && !prevLenEnabled && newLenEnabled && ch2.LengthCounter > 0)
+                        ch2.ExtraLengthClock();
 
-                ch2.WriteNR14(value);
+                    ch2.WriteNR14(value);
 
-                if (oddStep && trigger && newLenEnabled && ch2.LengthWasZeroOnTrigger)
-                    ch2.ExtraLengthClock();
+                    if (oddStep && trigger && newLenEnabled && ch2.LengthWasZeroOnTrigger)
+                        ch2.ExtraLengthClock();
 
-                if (trigger && frameSequencerStep == 7)
-                    ch2.DelayEnvelopeTimerForObscureTrigger();
+                    if (trigger && frameSequencerStep == 7)
+                        ch2.DelayEnvelopeTimerForObscureTrigger();
 
-                break;
-            }
+                    break;
+                }
 
             case 0xFF1A: ch3.WriteNR30(value); break;
             case 0xFF1B: ch3.WriteNR31(value); break;
             case 0xFF1C: ch3.WriteNR32(value); break;
             case 0xFF1D: ch3.WriteNR33(value); break;
             case 0xFF1E:
-            {
-                bool prevLenEnabled = (ch3.NR34 & 0x40) != 0;
-                bool newLenEnabled = (value & 0x40) != 0;
-                bool trigger = (value & 0x80) != 0;
-                bool oddStep = (frameSequencerStep & 1) == 1;
+                {
+                    bool prevLenEnabled = (ch3.NR34 & 0x40) != 0;
+                    bool newLenEnabled = (value & 0x40) != 0;
+                    bool trigger = (value & 0x80) != 0;
+                    bool oddStep = (frameSequencerStep & 1) == 1;
 
-                if (oddStep && !prevLenEnabled && newLenEnabled && ch3.LengthCounter > 0)
-                    ch3.ExtraLengthClock();
+                    if (oddStep && !prevLenEnabled && newLenEnabled && ch3.LengthCounter > 0)
+                        ch3.ExtraLengthClock();
 
-                // For DMG test 10, CH3 retrigger corruption is keyed to the
-                // channel's internal timer state (next sample read 2 T-cycles away),
-                // not an externally adjusted timestamp.
-                ch3.WriteNR34(value);
+                    // For DMG test 10, CH3 retrigger corruption is keyed to the
+                    // channel's internal timer state (next sample read 2 T-cycles away),
+                    // not an externally adjusted timestamp.
+                    ch3.WriteNR34(value);
 
-                if (oddStep && trigger && newLenEnabled && ch3.LengthWasZeroOnTrigger)
-                    ch3.ExtraLengthClock();
+                    if (oddStep && trigger && newLenEnabled && ch3.LengthWasZeroOnTrigger)
+                        ch3.ExtraLengthClock();
 
-                break;
-            }
+                    break;
+                }
 
             case 0xFF20: ch4.WriteNR41(value); break;
             case 0xFF21: ch4.WriteNR42(value); break;
             case 0xFF22: ch4.WriteNR43(value); break;
             case 0xFF23:
-            {
-                bool prevLenEnabled = (ch4.NR44 & 0x40) != 0;
-                bool newLenEnabled = (value & 0x40) != 0;
-                bool trigger = (value & 0x80) != 0;
-                bool oddStep = (frameSequencerStep & 1) == 1;
+                {
+                    bool prevLenEnabled = (ch4.NR44 & 0x40) != 0;
+                    bool newLenEnabled = (value & 0x40) != 0;
+                    bool trigger = (value & 0x80) != 0;
+                    bool oddStep = (frameSequencerStep & 1) == 1;
 
-                if (oddStep && !prevLenEnabled && newLenEnabled && ch4.LengthCounter > 0)
-                    ch4.ExtraLengthClock();
+                    if (oddStep && !prevLenEnabled && newLenEnabled && ch4.LengthCounter > 0)
+                        ch4.ExtraLengthClock();
 
-                ch4.WriteNR44(value);
+                    ch4.WriteNR44(value);
 
-                if (oddStep && trigger && newLenEnabled && ch4.LengthWasZeroOnTrigger)
-                    ch4.ExtraLengthClock();
+                    if (oddStep && trigger && newLenEnabled && ch4.LengthWasZeroOnTrigger)
+                        ch4.ExtraLengthClock();
 
-                if (trigger && frameSequencerStep == 7)
-                    ch4.DelayEnvelopeTimerForObscureTrigger();
+                    if (trigger && frameSequencerStep == 7)
+                        ch4.DelayEnvelopeTimerForObscureTrigger();
 
-                break;
-            }
+                    break;
+                }
 
             case 0xFF24: mmu.NR50 = value; break;
             case 0xFF25: mmu.NR51 = value; break;
@@ -377,8 +392,7 @@ public sealed class APU
         left *= leftVol * 0.25;
         right *= rightVol * 0.25;
 
-        // The high-pass filter is connected whenever any channel DAC is on,
-        // regardless of NR51 routing.
+        // The high-pass filter is connected whenever any channel DAC is on, regardless of NR51 routing.
         bool anyDacEnabled = ch1.DacEnabled || ch2.DacEnabled || ch3.DacEnabled || ch4.DacEnabled;
         left = HighPassDMG(left, ref capacitorL, anyDacEnabled);
         right = HighPassDMG(right, ref capacitorR, anyDacEnabled);
@@ -388,11 +402,19 @@ public sealed class APU
 
     private double HighPassDMG(double input, ref double capacitor, bool dacsEnabled)
     {
-        if (!dacsEnabled)
-            return 0.0;
-
         double output = input - capacitor;
-        capacitor = input - output * hpfChargeFactor;
+
+        if (dacsEnabled)
+        {
+            capacitor = input - output * hpfChargeFactor;
+        }
+        else
+        {
+            // Let the capacitor discharge smoothly instead of snapping to silence.
+            capacitor *= hpfChargeFactor;
+            output = -capacitor;
+        }
+
         return output;
     }
 
@@ -416,15 +438,29 @@ public sealed class APU
             sampleWriteIndex = (sampleWriteIndex + 1) % sampleFifo.Length;
 
             sampleCount += 2;
+            lastLeftSample = left;
+            lastRightSample = right;
         }
     }
 
     private void EnsureSpaceNoLock(int needed)
     {
+        // Always keep the FIFO aligned to stereo frames.
         while (sampleCount + needed > sampleFifo.Length)
         {
-            sampleReadIndex = (sampleReadIndex + 1) % sampleFifo.Length;
-            sampleCount--;
+            if (sampleCount >= 2)
+            {
+                sampleReadIndex = (sampleReadIndex + 2) % sampleFifo.Length;
+                sampleCount -= 2;
+            }
+            else
+            {
+                sampleReadIndex = 0;
+                sampleWriteIndex = 0;
+                sampleCount = 0;
+            }
+
+            OverflowDropCount++;
         }
     }
 
@@ -432,7 +468,10 @@ public sealed class APU
     {
         lock (sampleLock)
         {
-            int read = Math.Min(count, sampleCount);
+            int wanted = count & ~1;         // even number only
+            int available = sampleCount & ~1;
+            int read = Math.Min(wanted, available);
+
             for (int i = 0; i < read; i++)
             {
                 dest[offset + i] = sampleFifo[sampleReadIndex];
@@ -440,7 +479,18 @@ public sealed class APU
             }
 
             sampleCount -= read;
-            return read;
+
+            for (int i = read; i < wanted; i += 2)
+            {
+                dest[offset + i] = lastLeftSample;
+                if (i + 1 < wanted)
+                    dest[offset + i + 1] = lastRightSample;
+            }
+
+            if (read < wanted)
+                UnderrunCount++;
+
+            return wanted;
         }
     }
 
@@ -480,6 +530,8 @@ public sealed class APU
             sampleReadIndex = 0;
             sampleWriteIndex = 0;
             sampleCount = 0;
+            UnderrunCount = 0;
+            OverflowDropCount = 0;
         }
     }
 }

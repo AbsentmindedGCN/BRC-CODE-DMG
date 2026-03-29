@@ -13,6 +13,7 @@ public sealed class SquareChannel
     private readonly bool hasSweep;
 
     public bool Enabled { get; private set; }
+
     public byte NR10 { get; private set; }
     public byte NR11 { get; private set; }
     public byte NR12 { get; private set; }
@@ -22,6 +23,7 @@ public sealed class SquareChannel
     private int timer;
     private int dutyStep;
     private int lengthCounter;
+
     private int volume;
     private int envelopeTimer;
     private bool envelopeEnabled;
@@ -45,11 +47,15 @@ public sealed class SquareChannel
     {
         Enabled = false;
         NR10 = NR11 = NR12 = NR13 = NR14 = 0;
+
         timer = 0;
         dutyStep = 0;
+        lengthCounter = 0;
+
         volume = 0;
         envelopeTimer = 0;
         envelopeEnabled = false;
+
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
@@ -59,11 +65,14 @@ public sealed class SquareChannel
     public void ResetAfterPowerOn(bool isCgbMode)
     {
         Enabled = false;
+
         timer = 0;
         dutyStep = 0;
+
         volume = 0;
         envelopeTimer = 0;
         envelopeEnabled = false;
+
         sweepTimer = 0;
         shadowFrequency = 0;
         sweepEnabled = false;
@@ -85,6 +94,7 @@ public sealed class SquareChannel
 
         bool oldNegate = (NR10 & 0x08) != 0;
         bool newNegate = (value & 0x08) != 0;
+
         if (oldNegate && !newNegate && sweepNegateUsed)
             Enabled = false;
 
@@ -172,7 +182,14 @@ public sealed class SquareChannel
         if (envelopeTimer > 0)
             return;
 
-        envelopeTimer = GetEnvelopePeriod();
+        int rawPeriod = GetEnvelopePeriodRaw();
+        envelopeTimer = GetEnvelopeTimerReload();
+
+        // Hardware quirk:
+        // period 0 reloads the timer as 8 on trigger/timing purposes,
+        // but it does not perform automatic envelope volume steps.
+        if (rawPeriod == 0)
+            return;
 
         bool increase = (NR12 & 0x08) != 0;
         int newVolume = increase ? (volume + 1) : (volume - 1);
@@ -258,11 +275,12 @@ public sealed class SquareChannel
             lengthCounter = 64;
 
         volume = (NR12 >> 4) & 0x0F;
-        envelopeTimer = GetEnvelopePeriod();
+        envelopeTimer = GetEnvelopeTimerReload();
         envelopeEnabled = true;
 
-        // Hardware preserves the low 2 bits of the pulse timer on trigger
+        // Hardware preserves the low 2 bits of the pulse timer on trigger.
         timer = GetPeriod() | (timer & 0x03);
+
         Enabled = DacEnabled;
 
         if (!hasSweep)
@@ -307,9 +325,14 @@ public sealed class SquareChannel
         return (2048 - GetFrequency()) * 4;
     }
 
-    private int GetEnvelopePeriod()
+    private int GetEnvelopePeriodRaw()
     {
-        int period = NR12 & 0x07;
+        return NR12 & 0x07;
+    }
+
+    private int GetEnvelopeTimerReload()
+    {
+        int period = GetEnvelopePeriodRaw();
         return period == 0 ? 8 : period;
     }
 
@@ -327,12 +350,15 @@ public sealed class SquareChannel
         writer.Write(NR12);
         writer.Write(NR13);
         writer.Write(NR14);
+
         writer.Write(timer);
         writer.Write(dutyStep);
         writer.Write(lengthCounter);
+
         writer.Write(volume);
         writer.Write(envelopeTimer);
         writer.Write(envelopeEnabled);
+
         writer.Write(sweepTimer);
         writer.Write(shadowFrequency);
         writer.Write(sweepEnabled);
@@ -347,12 +373,15 @@ public sealed class SquareChannel
         NR12 = reader.ReadByte();
         NR13 = reader.ReadByte();
         NR14 = reader.ReadByte();
+
         timer = reader.ReadInt32();
         dutyStep = reader.ReadInt32();
         lengthCounter = reader.ReadInt32();
+
         volume = reader.ReadInt32();
         envelopeTimer = reader.ReadInt32();
         envelopeEnabled = reader.ReadBoolean();
+
         sweepTimer = reader.ReadInt32();
         shadowFrequency = reader.ReadInt32();
         sweepEnabled = reader.ReadBoolean();

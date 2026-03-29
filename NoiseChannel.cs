@@ -147,7 +147,12 @@ public sealed class NoiseChannel
         if (envelopeTimer > 0)
             return;
 
-        envelopeTimer = GetEnvelopePeriod();
+        int rawPeriod = GetEnvelopePeriodRaw();
+        envelopeTimer = GetEnvelopeTimerReload();
+
+        // Period 0 reloads as 8, but does NOT perform automatic volume steps.
+        if (rawPeriod == 0)
+            return;
 
         bool increase = (NR42 & 0x08) != 0;
         int newVolume = increase ? (volume + 1) : (volume - 1);
@@ -168,13 +173,17 @@ public sealed class NoiseChannel
             envelopeTimer++;
     }
 
-    public int GetDigitalOutput()
+    private int GetEnvelopePeriodRaw()
     {
-        if (!Enabled || !DacEnabled)
-            return 0;
-
-        return (((~lfsr) & 1) != 0) ? volume : 0;
+        return NR42 & 0x07;
     }
+
+    private int GetEnvelopeTimerReload()
+    {
+        int p = GetEnvelopePeriodRaw();
+        return p == 0 ? 8 : p;
+    }
+
 
     private void Trigger()
     {
@@ -183,11 +192,20 @@ public sealed class NoiseChannel
             lengthCounter = 64;
 
         volume = (NR42 >> 4) & 0x0F;
-        envelopeTimer = GetEnvelopePeriod();
+        envelopeTimer = GetEnvelopeTimerReload();
         envelopeEnabled = true;
+
         lfsr = 0x7FFF;
         timer = GetNoisePeriod();
         Enabled = DacEnabled;
+    }
+
+    public int GetDigitalOutput()
+    {
+        if (!Enabled || !DacEnabled)
+            return 0;
+
+        return (((~lfsr) & 1) != 0) ? volume : 0;
     }
 
     private void ApplyZombieEnvelopeWrite(byte oldValue, byte newValue)

@@ -21,10 +21,11 @@ public class Timer
             divCounter++;
             mmu.DIV = (byte)(divCounter >> 8);
 
-            if (((oldDiv & (1 << 12)) != 0) && ((divCounter & (1 << 12)) == 0))
+            // APU frame sequencer: bit 12 in normal speed, bit 13 in double speed.
+            int apuBit = mmu.CgbDoubleSpeed ? 0x2000 : 0x1000;
+            if (((oldDiv & apuBit) != 0) && ((divCounter & apuBit) == 0))
                 apu.ClockDivApu();
 
-            // TIMA increments on falling edge of selected divider bit
             if ((mmu.TAC & 0x04) != 0)
             {
                 int bitMask = GetTimerBitMask(mmu.TAC & 0x03);
@@ -40,8 +41,8 @@ public class Timer
         divCounter = 0;
         mmu.DIV = 0;
 
-        // FIX: Same bit-12 falling-edge check for the APU on a forced DIV reset.
-        if ((oldDiv & (1 << 12)) != 0)
+        int apuBit = mmu.CgbDoubleSpeed ? 0x2000 : 0x1000;
+        if ((oldDiv & apuBit) != 0)
             apu.ClockDivApu();
 
         if ((mmu.TAC & 0x04) != 0)
@@ -65,15 +66,16 @@ public class Timer
         }
     }
 
-    private static int GetTimerBitMask(int tacClock)
+    private int GetTimerBitMask(int tacClock)
     {
+        int shift = mmu.CgbDoubleSpeed ? 1 : 0;
         switch (tacClock)
         {
-            case 0: return 1 << 9;  // 4096 Hz
-            case 1: return 1 << 3;  // 262144 Hz
-            case 2: return 1 << 5;  // 65536 Hz
-            case 3: return 1 << 7;  // 16384 Hz
-            default: return 1 << 9;
+            case 0: return (1 << 9) << shift;
+            case 1: return (1 << 3) << shift;
+            case 2: return (1 << 5) << shift;
+            case 3: return (1 << 7) << shift;
+            default: return (1 << 9) << shift;
         }
     }
 

@@ -62,10 +62,27 @@ namespace BRCCodeDmg
             {
                 // Detect GBC from cartridge header byte 0x143 (0x80/0xC0 = GBC).
                 // Pass isGbc so CPU sets A=0x11 (GBC hardware ID) instead of A=0x01 (DMG).
-                // Without this, GBC games show the "designed for Game Boy Color" warning.
                 bool isGbc = gameRom.Length > 0x143 &&
                              (gameRom[0x143] == 0x80 || gameRom[0x143] == 0xC0);
+
                 Cpu.Reset(isGbc);
+
+                // When no boot ROM is present, real hardware would already have left the
+                // MMU/APU in a post-boot state. CPU.Reset() only handles CPU/video basics.
+                // CGB games that touch audio immediately can start from a bad APU state
+                // unless we also apply CGB post-boot audio defaults.
+                if (isGbc)
+                {
+                    Mmu.InitializeCGBRegisters();
+
+                    // Re-sync the APU's internal state with the visible MMU audio registers.
+                    // InitializeCGBRegisters() writes MMU regs directly, but the APU channel
+                    // state machines must also see a proper power-on sequence.
+                    Mmu.NR52 = 0x00;
+                    Apu.WriteRegister(0xFF26, 0x80);
+                    Apu.WriteRegister(0xFF24, 0x77);
+                    Apu.WriteRegister(0xFF25, 0xF3);
+                }
             }
 
             //Mmu.Load(_savePath);

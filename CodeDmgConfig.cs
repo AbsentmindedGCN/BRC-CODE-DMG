@@ -34,6 +34,7 @@ namespace BRCCodeDmg
         // Audio
         public ConfigEntry<bool> EnableAudio;
         public ConfigEntry<int>  Volume;
+        public ConfigEntry<string> AudioLatency;
 
         public CodeDmgConfig(ConfigFile config)
         {
@@ -112,6 +113,42 @@ namespace BRCCodeDmg
                     new AcceptableValueRange<int>(0, 100)
                 )
             );
+
+
+            AudioLatency = config.Bind(
+                "Music/Audio",
+                "AudioLatency",
+                "Normal",
+                new ConfigDescription(
+                    "Audio latency preset. Options: Very High (Prior Behavior), High, Normal, Low. The lower the value, the more chance for popping.",
+                    new AcceptableValueList<string>("Very High", "High", "Normal", "Low")
+                )
+            );
+        }
+
+        public int GetSampleFifoSize()
+        {
+            string latency = AudioLatency?.Value;
+
+            if (string.IsNullOrWhiteSpace(latency))
+                return 8192;
+
+            switch (latency.Trim().ToLowerInvariant())
+            {
+                case "very high":
+                    return 32768;
+
+                case "high":
+                    return 16384;
+
+                case "low":
+                    return 4096;
+
+                case "normal":
+                default:
+                    return 8192;
+            }
+
         }
     }
 }
