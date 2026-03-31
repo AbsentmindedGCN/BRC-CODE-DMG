@@ -75,6 +75,7 @@ namespace BRCCodeDmg
 
             CodeDmgPlugin.Instance.Config.Reload();
             CodeDmgPlugin.ConfigSettings = new CodeDmgConfig(CodeDmgPlugin.Instance.Config);
+            Helper.paletteName = CodeDmgPlugin.ConfigSettings?.Palette?.Value;
 
             CodeDmgState.AppActive = true;
             GBEmuCurrentState.AppActive = true;

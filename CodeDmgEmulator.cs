@@ -44,7 +44,8 @@ namespace BRCCodeDmg
             byte[] bootRom = File.Exists(bootRomPath) ? File.ReadAllBytes(bootRomPath) : new byte[256];
 
             Helper.scale = 1;
-            Helper.paletteName = "dmg";
+            //Helper.paletteName = "dmg";
+            Helper.paletteName = CodeDmgPlugin.ConfigSettings?.Palette?.Value;
 
             // MMU auto-detects GBC mode from cartridge header byte 0x143
             // (0x80 = GBC-compatible, 0xC0 = GBC-only)

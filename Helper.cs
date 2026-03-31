@@ -5,8 +5,30 @@ namespace BRCCodeDmg
 {
     public static class Helper
     {
+        public const string DefaultPaletteName = "dmg";
+
         public static int scale = 1;
-        public static string paletteName = "dmg";
+
+        private static string _paletteName = DefaultPaletteName;
+        public static string paletteName
+        {
+            get => _paletteName;
+            set => _paletteName = NormalizePaletteName(value);
+        }
+
+        public static readonly string[] PaletteNames =
+        {
+            "dmg",
+            "cyber",
+            "emu",
+            "autumn",
+            "paris",
+            "grayscale",
+            "early",
+            "crow",
+            "coffee",
+            "winter"
+        };
 
         public static readonly Dictionary<string, Color32[]> palettes = new Dictionary<string, Color32[]>
         {
@@ -22,6 +44,50 @@ namespace BRCCodeDmg
                 }
             },
             {
+                "cyber",
+                new[]
+                {
+                    new Color32(50, 153, 180, 255),
+                    new Color32(46, 116, 134, 255),
+                    new Color32(2, 70, 88, 255),
+                    new Color32(2, 49, 61, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "emu",
+                new[]
+                {
+                    new Color32(224, 248, 208, 255),
+                    new Color32(136, 192, 112, 255),
+                    new Color32(52, 104, 86, 255),
+                    new Color32(8, 24, 32, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "autumn",
+                new[]
+                {
+                    new Color32(255, 246, 211, 255),
+                    new Color32(249, 168, 117, 255),
+                    new Color32(235, 107, 111, 255),
+                    new Color32(124, 63, 88, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "paris",
+                new[]
+                {
+                    new Color32(218, 112, 214, 255),
+                    new Color32(186, 85, 211, 255),
+                    new Color32(153, 50, 204, 255),
+                    new Color32(75, 0, 130, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
                 "grayscale",
                 new[]
                 {
@@ -31,7 +97,60 @@ namespace BRCCodeDmg
                     new Color32(0, 0, 0, 255),
                     new Color32(255, 255, 255, 255)
                 }
+            },
+            {
+                "early",
+                new[]
+                {
+                    new Color32(0, 0, 0, 255),
+                    new Color32(85, 85, 85, 255),
+                    new Color32(170, 170, 170, 255),
+                    new Color32(255, 255, 255, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "crow",
+                new[]
+                {
+                    new Color32(204, 61, 80, 255),
+                    new Color32(153, 31, 39, 255),
+                    new Color32(89, 22, 22, 255),
+                    new Color32(38, 15, 13, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "coffee",
+                new[]
+                {
+                    new Color32(204, 158, 122, 255),
+                    new Color32(153, 116, 92, 255),
+                    new Color32(115, 77, 69, 255),
+                    new Color32(77, 48, 46, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "winter",
+                new[]
+                {
+                    new Color32(159, 244, 229, 255),
+                    new Color32(0, 185, 190, 255),
+                    new Color32(0, 95, 140, 255),
+                    new Color32(0, 43, 89, 255),
+                    new Color32(255, 255, 255, 255)
+                }
             }
         };
+
+        public static string NormalizePaletteName(string paletteName)
+        {
+            if (string.IsNullOrWhiteSpace(paletteName))
+                return DefaultPaletteName;
+
+            string normalized = paletteName.Trim().ToLowerInvariant();
+            return palettes.ContainsKey(normalized) ? normalized : DefaultPaletteName;
+        }
     }
 }

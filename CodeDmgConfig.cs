@@ -29,11 +29,12 @@ namespace BRCCodeDmg
 
         // Display
         public ConfigEntry<string> BackgroundColor;
-        public ConfigEntry<bool>   PixelGrid;
+        public ConfigEntry<bool> PixelGrid;
+        public ConfigEntry<string> Palette;
 
         // Audio
         public ConfigEntry<bool> EnableAudio;
-        public ConfigEntry<int>  Volume;
+        public ConfigEntry<int> Volume;
         public ConfigEntry<string> AudioLatency;
 
         public CodeDmgConfig(ConfigFile config)
@@ -45,14 +46,14 @@ namespace BRCCodeDmg
                 "Path to ROM file (.gb or .gbc). Leave empty to use rom.gbc / rom.gb in plugin folder."
             );
 
-            Up     = config.Bind("Controls", "Up",     KeyCode.W, "D-pad Up");
-            Down   = config.Bind("Controls", "Down",   KeyCode.S, "D-pad Down");
-            Left   = config.Bind("Controls", "Left",   KeyCode.A, "D-pad Left");
-            Right  = config.Bind("Controls", "Right",  KeyCode.D, "D-pad Right");
+            Up = config.Bind("Controls", "Up", KeyCode.W, "D-pad Up");
+            Down = config.Bind("Controls", "Down", KeyCode.S, "D-pad Down");
+            Left = config.Bind("Controls", "Left", KeyCode.A, "D-pad Left");
+            Right = config.Bind("Controls", "Right", KeyCode.D, "D-pad Right");
 
-            A      = config.Bind("Controls", "A",      KeyCode.Period,     "GB A button");
-            B      = config.Bind("Controls", "B",      KeyCode.Comma,      "GB B button");
-            Start  = config.Bind("Controls", "Start",  KeyCode.Return,     "GB Start button");
+            A = config.Bind("Controls", "A", KeyCode.Period, "GB A button");
+            B = config.Bind("Controls", "B", KeyCode.Comma, "GB B button");
+            Start = config.Bind("Controls", "Start", KeyCode.Return, "GB Start button");
             Select = config.Bind("Controls", "Select", KeyCode.RightShift, "GB Select button");
 
             AutoSaveOnClose = config.Bind(
@@ -81,6 +82,16 @@ namespace BRCCodeDmg
                 "BatterySaveAutoLoad",
                 true,
                 "Automatically load the battery save (.sav) file when starting the emulator."
+            );
+
+            Palette = config.Bind(
+                "Display",
+                "Palette",
+                Helper.DefaultPaletteName,
+                new ConfigDescription(
+                    "Select the palette used for Game Boy games. Default is the original olive-green DMG palette.",
+                    new AcceptableValueList<string>(Helper.PaletteNames)
+                )
             );
 
             BackgroundColor = config.Bind(
@@ -113,7 +124,6 @@ namespace BRCCodeDmg
                     new AcceptableValueRange<int>(0, 100)
                 )
             );
-
 
             AudioLatency = config.Bind(
                 "Music/Audio",
@@ -148,7 +158,6 @@ namespace BRCCodeDmg
                 default:
                     return 8192;
             }
-
         }
     }
 }
