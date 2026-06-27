@@ -48,12 +48,14 @@ There's a lot of great Game Boy and Game Boy Color [Homebrew ROMs on itch.io](ht
 - [c-sp](https://github.com/c-sp), for compiling [GB Test Roms](https://github.com/c-sp/game-boy-test-roms) to find and address compatibility issues (also Blargg's Test Roms)
 - [Marat Fayzullin](https://fms.komkon.org/), for [Pan Docs](https://gbdev.io/pandocs/Audio.html)
 - [Gekkio](https://github.com/Gekkio), for [TCAGBD](https://raw.githubusercontent.com/AntonioND/giibiiadvance/master/docs/TCAGBD.pdf) and the [Mooneye GB Test Suite](https://github.com/Gekkio/mooneye-test-suite)
-- [LIJI32](https://github.com/LIJI32), for [SameBoy](https://github.com/LIJI32/SameBoy), which was referenced frequently
+- [LIJI32](https://github.com/LIJI32), for [SameBoy](https://github.com/LIJI32/SameBoy), which was referenced frequently hardware accuracy and serial/link cable behavior
+- [mpostaire](https://github.com/mpostaire), for [gbmulator](https://github.com/mpostaire/gbmulator), whos link cable implementation was a monumental reference for the local dual-emulator approach used for multiplayer support
 
 ---
 
 ## Notes
-- Link Cable/Multiplayer is currently not supported
+- Link Cable/Multiplayer is in early stages, and reequires [All City Network](https://thunderstore.io/c/bomb-rush-cyberfunk/p/Freesoul/All_City_Network/).
+- IR emulation is currently not supported.
 
 ---
 
