@@ -6,6 +6,7 @@ namespace BRCCodeDmg
     public static class Helper
     {
         public const string DefaultPaletteName = "dmg";
+        public const string DefaultPeerPaletteName = "bombrush-blue";
 
         public static int scale = 1;
 
@@ -27,7 +28,9 @@ namespace BRCCodeDmg
             "early",
             "crow",
             "coffee",
-            "winter"
+            "winter",
+            "bombrush-orange",
+            "bombrush-blue"
         };
 
         public static readonly Dictionary<string, Color32[]> palettes = new Dictionary<string, Color32[]>
@@ -141,16 +144,50 @@ namespace BRCCodeDmg
                     new Color32(0, 43, 89, 255),
                     new Color32(255, 255, 255, 255)
                 }
+            },
+            {
+                "bombrush-orange",
+                new[]
+                {
+                    new Color32(255, 218, 170, 255),
+                    new Color32(220, 101, 57, 255),
+                    new Color32(143, 55, 42, 255),
+                    new Color32(59, 25, 31, 255),
+                    new Color32(255, 255, 255, 255)
+                }
+            },
+            {
+                "bombrush-blue",
+                new[]
+                {
+                    new Color32(216, 228, 255, 255),
+                    new Color32(63, 111, 194, 255),
+                    new Color32(38, 60, 136, 255),
+                    new Color32(13, 13, 63, 255),
+                    new Color32(255, 255, 255, 255)
+                }
             }
         };
 
         public static string NormalizePaletteName(string paletteName)
         {
+            return NormalizePaletteName(paletteName, DefaultPaletteName);
+        }
+
+        public static string NormalizePaletteName(string paletteName, string fallbackPaletteName)
+        {
+            string fallback = string.IsNullOrWhiteSpace(fallbackPaletteName)
+                ? DefaultPaletteName
+                : fallbackPaletteName.Trim().ToLowerInvariant();
+
+            if (!palettes.ContainsKey(fallback))
+                fallback = DefaultPaletteName;
+
             if (string.IsNullOrWhiteSpace(paletteName))
-                return DefaultPaletteName;
+                return fallback;
 
             string normalized = paletteName.Trim().ToLowerInvariant();
-            return palettes.ContainsKey(normalized) ? normalized : DefaultPaletteName;
+            return palettes.ContainsKey(normalized) ? normalized : fallback;
         }
     }
 }

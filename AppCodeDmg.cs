@@ -1,11 +1,12 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text;
+using BombRushMP.Plugin;
 using CommonAPI;
 using CommonAPI.Phone;
 using Reptile;
 using UnityEngine;
-using System.Reflection;
 using UnityEngine.EventSystems;
 using TMPro;
 
@@ -15,6 +16,7 @@ namespace BRCCodeDmg
     {
         private static Sprite IconSprite;
         private static bool   _initialized;
+        private static AppCodeDmg _activeInstance;
 
         private CodeDmgEmulator    _emulator;
         private CodeDmgRenderer    _renderer;
@@ -26,12 +28,30 @@ namespace BRCCodeDmg
         // Chat fix
         private static PropertyInfo _slopChatInputBlockedProperty;
         private static bool _slopChatReflectionInitialized;
+        private bool _wasChatActive;
+
+        public CodeDmgEmulator GetEmulator() => _emulator;
 
         public override bool Available => true;
 
         private const float TargetGameBoyFps = 59.7275f;
         private const float TargetFrameTime  = 1f / TargetGameBoyFps;
         private float _emulationTimeAccumulator = 0f;
+
+        // Start+Select Hold to Open Menu for Pads
+        private const float LinkHoldRequired = 1f;
+        private float _linkHoldTimer = 0f;
+        private bool _linkHoldFired = false;
+        private float _suppressEmulatorInputUntil = -1f;
+        private static float _rightMenuOpenProbeUntil = -1f;
+        private static bool _rightMenuOpenBlockedUntilRelease;
+
+        // Hold R to reboot ROM
+        /*
+        private const float RebootHoldRequired = 3f;
+        private float _rebootHoldTimer = 0f;
+        private bool _rebootHoldFired = false;
+        */
 
         // ── Static init ───────────────────────────────────────────────────────
         public static void Initialize()
@@ -53,6 +73,7 @@ namespace BRCCodeDmg
         public override void OnAppInit()
         {
             base.OnAppInit();
+            _activeInstance = this;
 
             if (IconSprite != null) CreateTitleBar("GB-EMU", IconSprite);
             else                    CreateIconlessTitleBar("GB-EMU");
@@ -72,6 +93,8 @@ namespace BRCCodeDmg
         public override void OnAppEnable()
         {
             base.OnAppEnable();
+            _activeInstance = this;
+            BeginRightMenuOpenReleaseGuard();
 
             CodeDmgPlugin.Instance.Config.Reload();
             CodeDmgPlugin.ConfigSettings = new CodeDmgConfig(CodeDmgPlugin.Instance.Config);
@@ -118,6 +141,18 @@ namespace BRCCodeDmg
             if (_emulator != null && autoLoad)
                 TryLoadState();
 
+            // Register with Link Cable Manager
+            CodeDmgPlugin.LinkCable?.SetApp(this);
+
+            if (_emulator != null && CodeDmgPlugin.LinkCable != null)
+                CodeDmgPlugin.LinkCable.SetLocalRomHash(_emulator.GetRomHash());
+
+            if (CodeDmgPlugin.LinkCable != null)
+                CodeDmgPlugin.LinkCable.StateChanged += OnLinkCableStateChanged;
+
+            // Check for pending invites already sent
+            CheckPendingInviteOnOpen();
+
             RenderNow();
         }
 
@@ -125,6 +160,11 @@ namespace BRCCodeDmg
         public override void OnAppDisable()
         {
             base.OnAppDisable();
+
+            if (_activeInstance == this)
+                _activeInstance = null;
+
+            _renderer?.Teardown();
 
             if (_audioDriver != null)
                 _audioDriver.SetMuted(true);
@@ -150,9 +190,18 @@ namespace BRCCodeDmg
                 }
             }
 
+            CodeDmgPlugin.LinkCable?.Drop(); // Kill the link cable if the app closes
+
+            if (CodeDmgPlugin.LinkCable != null)
+                CodeDmgPlugin.LinkCable.StateChanged -= OnLinkCableStateChanged;
+
             // Force a fresh session next time the app opens.
             _emulator = null;
             _emulationTimeAccumulator = 0f;
+            _linkHoldTimer = 0f;
+            _linkHoldFired = false;
+            // _rebootHoldTimer = 0f;
+            // _rebootHoldFired = false;
 
             if (_audioDriver != null)
                 _audioDriver.SetEmulator(null);
@@ -162,9 +211,81 @@ namespace BRCCodeDmg
         {
             base.OnAppUpdate();
 
+            // Tick link cable manager (timeout, ROM mismatch timer)
+            if (CodeDmgPlugin.ConfigSettings?.LinkCableEnabled.Value == true)
+                CodeDmgPlugin.LinkCable?.Tick(Time.unscaledDeltaTime);
+
+            // Pending Invites
+            if (CodeDmgPlugin.ConfigSettings?.LinkCableEnabled.Value == true &&
+                CodeDmgPlugin.LinkCable != null &&
+                CodeDmgPlugin.LinkCable.HasPendingInvite &&
+                !LinkCableConnectDialog.IsVisible &&
+                !MasterMenu.IsVisible &&
+                !RomSelectMenu.IsVisible &&
+                !VolumeMenu.IsVisible &&
+                !GBPaletteMenu.IsVisible)
+            {
+                ShowConnectDialog();
+            }
+
             if (_emulator == null || _renderer == null) return;
 
-            HandleEmulatorInput();
+            UpdateRightMenuOpenReleaseGuard();
+
+            if (Input.GetKeyDown(KeyCode.RightArrow) && !ShouldBlockRightMenuOpenSignal())
+                TryOpenMasterMenuFromRightInput();
+
+            // Hold Start+Select for GB-Emu Master Menu
+            bool suppressStartSelect = false;
+            if (!MasterMenu.IsVisible &&
+                !LinkCablePlayerList.IsVisible &&
+                !LinkCableConnectDialog.IsVisible &&
+                !RomSelectMenu.IsVisible &&
+                !VolumeMenu.IsVisible &&
+                !GBPaletteMenu.IsVisible)
+            {
+                CodeDmgConfig cfg = CodeDmgPlugin.ConfigSettings;
+                bool startHeld  = cfg != null && (Input.GetKey(cfg.Start.Value)  || Input.GetKey(KeyCode.JoystickButton3));
+                bool selectHeld = cfg != null && (Input.GetKey(cfg.Select.Value) || Input.GetKey(KeyCode.JoystickButton2));
+
+                if (startHeld && selectHeld)
+                {
+                    suppressStartSelect = true;
+                    _linkHoldTimer += Time.unscaledDeltaTime;
+                    if (_linkHoldTimer >= LinkHoldRequired && !_linkHoldFired)
+                    {
+                        _linkHoldFired = true;
+                        OpenMasterMenu();
+                    }
+                }
+                else
+                {
+                    _linkHoldTimer = 0f;
+                    _linkHoldFired = false;
+                }
+            }
+
+            HandleEmulatorInput(suppressStartSelect);
+
+            /*
+            if (!MasterMenu.IsVisible && !LinkCablePlayerList.IsVisible && !LinkCableConnectDialog.IsVisible && !RomSelectMenu.IsVisible && !VolumeMenu.IsVisible && !GBPaletteMenu.IsVisible)
+            {
+                if (Input.GetKey(KeyCode.R))
+                {
+                    _rebootHoldTimer += Time.unscaledDeltaTime;
+                    if (_rebootHoldTimer >= RebootHoldRequired && !_rebootHoldFired)
+                    {
+                        _rebootHoldFired = true;
+                        RebootEmulator();
+                    }
+                }
+                else
+                {
+                    _rebootHoldTimer = 0f;
+                    _rebootHoldFired = false;
+                }
+            }
+            */
 
             _emulationTimeAccumulator += Time.unscaledDeltaTime;
             if (_emulationTimeAccumulator > TargetFrameTime * 3f)
@@ -173,6 +294,13 @@ namespace BRCCodeDmg
             bool renderedFrame = false;
             while (_emulationTimeAccumulator >= TargetFrameTime)
             {
+                if (_emulator.ShouldYieldForSerialLink())
+                {
+                    _emulator.TickSerialLinkWait(Time.unscaledDeltaTime);
+                    _emulationTimeAccumulator = 0f;
+                    break;
+                }
+
                 _emulationTimeAccumulator -= TargetFrameTime;
                 _emulator.StepFrame();
                 renderedFrame = true;
@@ -182,8 +310,239 @@ namespace BRCCodeDmg
                 _renderer.Render(_emulator);
         }
 
-        // ── Boot ──────────────────────────────────────────────────────────────
+        internal static void PlayMenuSelectSFX()
+        {
+            _activeInstance?.m_AudioManager.PlaySfxGameplay(SfxCollectionID.PhoneSfx, AudioClipID.FlipPhone_Select, 0f);
+        }
 
+        internal static void PlayMenuConfirmSFX()
+        {
+            _activeInstance?.m_AudioManager.PlaySfxGameplay(SfxCollectionID.PhoneSfx, AudioClipID.FlipPhone_Confirm, 0f);
+        }
+
+        internal static void PlayMenuBackSFX()
+        {
+            _activeInstance?.m_AudioManager.PlaySfxGameplay(SfxCollectionID.PhoneSfx, AudioClipID.FlipPhone_Back, 0f);
+        }
+
+        // ── Link Cable ────────────────────────────────────────────────────────
+        internal static void HandleGamePauseStarted()
+        {
+            var app = _activeInstance;
+            if (app == null) return;
+
+            var core = Core.Instance;
+            if (core != null && !core.IsCorePaused) return;
+
+            app._renderer?.HideSecondPlayerScreen();
+            app._emulationTimeAccumulator = 0f;
+
+            var lc = CodeDmgPlugin.LinkCable;
+            if (lc != null && (lc.State != LinkCableState.Disconnected || lc.HasPendingInvite))
+                lc.Drop();
+        }
+
+        private void OnLinkCableStateChanged()
+        {
+            _renderer?.RenderLinkCableStatus(CodeDmgPlugin.LinkCable);
+        }
+
+        private void CheckPendingInviteOnOpen()
+        {
+            var lc = CodeDmgPlugin.LinkCable;
+            if (lc != null && lc.HasPendingInvite)
+                ShowConnectDialog();
+        }
+
+        private void ShowConnectDialog()
+        {
+            var lc = CodeDmgPlugin.LinkCable;
+            if (CodeDmgPlugin.ConfigSettings?.LinkCableEnabled.Value != true || lc == null) return;
+            string hostName = lc.PendingInviterName ?? "Host";
+            LinkCableConnectDialog.Show(
+                hostName,
+                onYes: () => lc.ClientAcceptInvite(),
+                onNo:  () => lc.ClientDeclineInvite()
+            );
+        }
+
+        internal void OnLinkButtonPressed()
+        {
+            var lc = CodeDmgPlugin.LinkCable;
+            if (CodeDmgPlugin.ConfigSettings?.LinkCableEnabled.Value != true || lc == null) return;
+
+            if (lc.State != LinkCableState.Disconnected)
+            {
+                lc.Drop();
+                return;
+            }
+
+            BackupSaveData();
+
+            string localName = GetLocalPlayerDisplayName();
+            LinkCablePlayerList.Show((targetId, targetName) =>
+            {
+                lc.HostSendInvite(targetId, localName, targetName);
+                _renderer?.RenderLinkCableStatus(lc);
+            });
+        }
+
+        private static string GetLocalPlayerDisplayName()
+        {
+            try
+            {
+                var cc = ClientController.Instance;
+                if (cc == null) return string.Empty;
+                ushort localId = cc.LocalID;
+                if (cc.Players == null || !cc.Players.TryGetValue(localId, out var localPlayer) || localPlayer == null)
+                    return string.Empty;
+                string name = MPUtility.GetPlayerDisplayName(localPlayer.ClientState);
+                return string.IsNullOrWhiteSpace(name) ? string.Empty : name;
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        private void RebootEmulator()
+        {
+            CodeDmgPlugin.LinkCable?.Drop();
+
+            if (_emulator == null) return;
+
+            if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoSave.Value == true)
+                _emulator.SaveRam();
+
+            string romPath  = _loadedRomPath ?? GetConfiguredRomPath();
+            string bootPath = _emulator.BootRomPath;
+            string savePath = _emulator.SavePath;
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(null);
+
+            _emulator = new CodeDmgEmulator(romPath, bootPath, savePath);
+
+            if (CodeDmgPlugin.ConfigSettings != null)
+                _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+
+            if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoLoad.Value == true)
+                _emulator.LoadSaveRam();
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(_emulator);
+
+            _loadedRomPath = romPath;
+            _emulationTimeAccumulator = 0f;
+            _linkHoldTimer = 0f;
+            _linkHoldFired = false;
+
+            CodeDmgPlugin.LinkCable?.SetApp(this);
+            CodeDmgPlugin.LinkCable?.SetLocalRomHash(_emulator.GetRomHash());
+
+            RenderNow();
+        }
+
+        private void OpenMasterMenu()
+        {
+            MasterMenu.Show(
+                onChangeGame: () => RomSelectMenu.Show(BootRom),
+                onLinkCable:  () => OnLinkButtonPressed(),
+                onVolume:     () => VolumeMenu.Show(),
+                onGBPalette:  () => GBPaletteMenu.Show(),
+                onReboot:     () => RebootEmulator()
+            );
+        }
+
+        internal static bool TryOpenMasterMenuFromRightInput()
+        {
+            var app = _activeInstance;
+            if (app == null || app._emulator == null || app._renderer == null)
+                return false;
+
+            if (IsChatInputActive() || PopupState.AnyVisible || ShouldBlockRightMenuOpenSignal())
+                return false;
+
+            app.OpenMasterMenu();
+            app.SuppressEmulatorInputFor(0.2f);
+            PopupState.SuppressPhoneNavFor(0.2f);
+            return true;
+        }
+
+        // ROM Select Menu ROM Booter
+        internal void BootRom(string romPath)
+        {
+            if (string.IsNullOrWhiteSpace(romPath) || !File.Exists(romPath)) return;
+
+            SuppressEmulatorInputFor(0.5f);
+
+            CodeDmgPlugin.LinkCable?.Drop();
+
+            if (_emulator != null)
+            {
+                if (CodeDmgPlugin.ConfigSettings?.AutoSaveOnClose.Value == true)
+                    SaveState();
+                if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoSave.Value == true)
+                    _emulator.SaveRam();
+            }
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(null);
+
+            string bootPath = Path.Combine(CodeDmgPlugin.Instance.PluginDirectory, "dmg_boot.bin");
+            string savePath = GetBatterySavePath(romPath);
+
+            _emulator = new CodeDmgEmulator(romPath, bootPath, savePath);
+            _loadedRomPath = romPath;
+            SaveLastRomPath(romPath);
+
+            if (CodeDmgPlugin.ConfigSettings != null)
+                _emulator.SetAudioEnabled(CodeDmgPlugin.ConfigSettings.EnableAudio.Value);
+
+            if (CodeDmgPlugin.ConfigSettings?.BatterySaveAutoLoad.Value == true)
+                _emulator.LoadSaveRam();
+
+            if (_audioDriver != null)
+                _audioDriver.SetEmulator(_emulator);
+
+            _emulationTimeAccumulator = 0f;
+            _linkHoldTimer = 0f;
+            _linkHoldFired = false;
+
+            if (CodeDmgPlugin.ConfigSettings?.AutoLoadOnOpen.Value == true)
+                TryLoadState();
+
+            CodeDmgPlugin.LinkCable?.SetApp(this);
+            CodeDmgPlugin.LinkCable?.SetLocalRomHash(_emulator.GetRomHash());
+
+            RenderNow();
+        }
+
+        private void BackupSaveData()
+        {
+            if (_emulator == null) return;
+            try
+            {
+                string statePath = GetStatePath(_loadedRomPath ?? GetConfiguredRomPath());
+                if (File.Exists(statePath))
+                {
+                    string backup = statePath + ".linkbackup";
+                    File.Copy(statePath, backup, true);
+                }
+
+                string romPath = _loadedRomPath ?? GetConfiguredRomPath();
+                string savPath = GetBatterySavePath(romPath);
+                if (File.Exists(savPath))
+                {
+                    string backup = savPath + ".linkbackup";
+                    File.Copy(savPath, backup, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[CODE-DMG] Link cable save backup failed: " + ex.Message);
+            }
+        }
+
+        // ── Boot ──────────────────────────────────────────────────────────────
         private void TryBootEmulator()
         {
             string romPath = GetConfiguredRomPath();
@@ -201,6 +560,7 @@ namespace BRCCodeDmg
             }
 
             _emulator = new CodeDmgEmulator(romPath, bootRomPath, savePath);
+            SaveLastRomPath(romPath);
 
             if (ReadBoolFromConfig("SaveStates", "BatterySaveAutoLoad", true))
                 _emulator.LoadSaveRam();
@@ -277,15 +637,54 @@ namespace BRCCodeDmg
         }
 
         // ── Path helpers ──────────────────────────────────────────────────────
-        private static string GetSavesFolder()
+        private static string GetDataFolder()
         {
             string folder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 "Bomb Rush Cyberfunk Modding",
-                "BRCGameBoyEmu",
-                "Saves");
+                "BRCGameBoyEmu");
             Directory.CreateDirectory(folder);
             return folder;
+        }
+
+        private static string GetSavesFolder()
+        {
+            string folder = Path.Combine(GetDataFolder(), "Saves");
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        private static string GetLastRomPathFile()
+        {
+            return Path.Combine(GetDataFolder(), "LastRomDir");
+        }
+
+        private static string ReadLastRomPath()
+        {
+            try
+            {
+                string path = GetLastRomPathFile();
+                if (!File.Exists(path)) return string.Empty;
+                string romPath = NormalizeConfiguredRomPath(File.ReadAllText(path));
+                if (string.IsNullOrWhiteSpace(romPath) || !File.Exists(romPath)) return string.Empty;
+                string ext = Path.GetExtension(romPath).ToLowerInvariant();
+                return ext == ".gb" || ext == ".gbc" ? romPath : string.Empty;
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        private static void SaveLastRomPath(string romPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(romPath) || !File.Exists(romPath)) return;
+                File.WriteAllText(GetLastRomPathFile(), romPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[CODE-DMG] Failed to save last ROM path: " + ex.Message);
+            }
         }
 
         private static string GetRomTitle(string romPath)
@@ -338,6 +737,13 @@ namespace BRCCodeDmg
         {
             if (CodeDmgPlugin.ConfigSettings != null)
             {
+                if (CodeDmgPlugin.ConfigSettings.LoadLastPlayed.Value)
+                {
+                    string lastRom = ReadLastRomPath();
+                    if (!string.IsNullOrWhiteSpace(lastRom))
+                        return lastRom;
+                }
+
                 string configured = CodeDmgPlugin.ConfigSettings.RomPath.Value;
                 string normalized = NormalizeConfiguredRomPath(configured);
 
@@ -452,9 +858,22 @@ namespace BRCCodeDmg
         }
 
         // ── Input ─────────────────────────────────────────────────────────────
-        private void HandleEmulatorInput()
+        private void HandleEmulatorInput(bool suppressStartSelect = false)
         {
             if (_emulator == null || CodeDmgPlugin.ConfigSettings == null) return;
+
+            if (Time.unscaledTime <= _suppressEmulatorInputUntil)
+            {
+                ReleaseAllButtons();
+                return;
+            }
+
+            // Ignore input when menus are visible
+            if (MasterMenu.IsVisible || LinkCablePlayerList.IsVisible || LinkCableConnectDialog.IsVisible || RomSelectMenu.IsVisible || VolumeMenu.IsVisible || GBPaletteMenu.IsVisible)
+            {
+                ReleaseAllButtons();
+                return;
+            }
 
             if (IgnoreInputForChat())
             {
@@ -466,14 +885,21 @@ namespace BRCCodeDmg
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
 
+            bool swap = cfg.SwapButtons != null && cfg.SwapButtons.Value;
             _emulator.SetButton(GameBoyButton.A,
-                Input.GetKey(cfg.A.Value) || Input.GetKey(KeyCode.JoystickButton0));
+                swap
+                    ? (Input.GetKey(cfg.A.Value) || Input.GetKey(KeyCode.JoystickButton1))
+                    : (Input.GetKey(cfg.A.Value) || Input.GetKey(KeyCode.JoystickButton0)));
             _emulator.SetButton(GameBoyButton.B,
-                Input.GetKey(cfg.B.Value) || Input.GetKey(KeyCode.JoystickButton1));
+                swap
+                    ? (Input.GetKey(cfg.B.Value) || Input.GetKey(KeyCode.JoystickButton0))
+                    : (Input.GetKey(cfg.B.Value) || Input.GetKey(KeyCode.JoystickButton1)));
+            
+            // Suppress Start+Select
             _emulator.SetButton(GameBoyButton.Start,
-                Input.GetKey(cfg.Start.Value) || Input.GetKey(KeyCode.JoystickButton3));
+                !suppressStartSelect && (Input.GetKey(cfg.Start.Value) || Input.GetKey(KeyCode.JoystickButton3)));
             _emulator.SetButton(GameBoyButton.Select,
-                Input.GetKey(cfg.Select.Value) || Input.GetKey(KeyCode.JoystickButton2));
+                !suppressStartSelect && (Input.GetKey(cfg.Select.Value) || Input.GetKey(KeyCode.JoystickButton2)));
             _emulator.SetButton(GameBoyButton.Right,
                 Input.GetKey(cfg.Right.Value) || h > 0.5f);
             _emulator.SetButton(GameBoyButton.Left,
@@ -484,7 +910,40 @@ namespace BRCCodeDmg
                 Input.GetKey(cfg.Down.Value)  || v < -0.5f);
         }
 
-        private bool IgnoreInputForChat()
+        internal static void BeginRightMenuOpenReleaseGuard()
+        {
+            float now = Time.unscaledTime;
+            _rightMenuOpenProbeUntil = now + 0.25f;
+            _rightMenuOpenBlockedUntilRelease = Input.GetKey(KeyCode.RightArrow);
+        }
+
+        private static void UpdateRightMenuOpenReleaseGuard()
+        {
+            if (_rightMenuOpenBlockedUntilRelease && !Input.GetKey(KeyCode.RightArrow))
+                _rightMenuOpenBlockedUntilRelease = false;
+        }
+
+        internal static bool ShouldBlockRightMenuOpenSignal()
+        {
+            if (_rightMenuOpenBlockedUntilRelease)
+                return true;
+
+            if (Time.unscaledTime <= _rightMenuOpenProbeUntil)
+            {
+                _rightMenuOpenBlockedUntilRelease = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        internal static void MarkRightMenuOpenReleased()
+        {
+            _rightMenuOpenBlockedUntilRelease = false;
+            _rightMenuOpenProbeUntil = -1f;
+        }
+
+        internal static bool IsChatInputActive()
         {
             if (TryGetSlopChatInputBlocked(out bool inputBlocked) && inputBlocked)
                 return true;
@@ -503,6 +962,19 @@ namespace BRCCodeDmg
             }
 
             return false;
+        }
+
+        private bool IgnoreInputForChat()
+        {
+            bool chatActive = IsChatInputActive();
+            if (_wasChatActive && !chatActive)
+            {
+                SuppressEmulatorInputFor(0.3f);
+                _wasChatActive = false;
+                return true;  // block input this frame too — Enter still physically held
+            }
+            _wasChatActive = chatActive;
+            return chatActive;
         }
 
         private static bool TryGetSlopChatInputBlocked(out bool blocked)
@@ -544,6 +1016,12 @@ namespace BRCCodeDmg
             }
 
             return false;
+        }
+
+        private void SuppressEmulatorInputFor(float seconds)
+        {
+            _suppressEmulatorInputUntil = Mathf.Max(_suppressEmulatorInputUntil, Time.unscaledTime + seconds);
+            ReleaseAllButtons();
         }
 
         private void ReleaseAllButtons()

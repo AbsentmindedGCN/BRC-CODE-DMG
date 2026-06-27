@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net46</TargetFramework>
+		<TargetFramework>net462</TargetFramework>
 		<LangVersion>latest</LangVersion>
 		<AssemblyName>CodeDMGEmu</AssemblyName>
 		<RootNamespace>BRCCodeDmg</RootNamespace>
@@ -18,12 +18,16 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<Reference Include="Assembly-CSharp">
 			<HintPath>$(ManagedPath)\Assembly-CSharp.dll</HintPath>
 			<Private>false</Private>
+			<Publicize>true</Publicize>
 		</Reference>
 
-		<!-- Important: keep the base UnityEngine reference -->
 		<Reference Include="UnityEngine">
 			<HintPath>$(ManagedPath)\UnityEngine.dll</HintPath>
 			<Private>false</Private>
@@ -41,6 +45,11 @@
 
 		<Reference Include="UnityEngine.AudioModule">
 			<HintPath>$(ManagedPath)\UnityEngine.AudioModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
+		<Reference Include="UnityEngine.TextRenderingModule">
+			<HintPath>$(ManagedPath)\UnityEngine.TextRenderingModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
@@ -89,7 +98,6 @@
 			<Private>false</Private>
 		</Reference>
 
-		<!-- Only keep these if you truly use DOTween in your own code -->
 		<Reference Include="DOTween">
 			<HintPath>Libraries\DOTween.dll</HintPath>
 			<Private>false</Private>
@@ -99,9 +107,22 @@
 			<HintPath>Libraries\DOTween46.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
+
+		<Reference Include="BombRushMP.Plugin">
+			<HintPath>Libraries\BombRushMP.Plugin.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="BombRushMP.Common">
+			<HintPath>Libraries\BombRushMP.Common.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="BombRushMP.PluginCommon">
+			<HintPath>Libraries\BombRushMP.PluginCommon.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+
 	</ItemGroup>
 
-	<!-- Prevent the vendored CommonAPI source folder from compiling -->
 	<ItemGroup>
 		<Compile Remove="libs\BRC-CommonAPI\**\*.cs" />
 		<EmbeddedResource Remove="libs\BRC-CommonAPI\**\*" />

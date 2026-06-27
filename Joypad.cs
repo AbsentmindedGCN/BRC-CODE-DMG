@@ -31,6 +31,10 @@ namespace BRCCodeDmg
             this.mmu = mmu;
         }
 
+        // Direct raw byte write for linked emulator peer-joypad application.
+        internal void SetStateRaw(byte state) { mmu.joypadState = state; }
+        internal byte GetState() => mmu.joypadState;
+
         public void SetButton(GameBoyButton button, bool pressed)
         {
             byte mask = (byte)button;

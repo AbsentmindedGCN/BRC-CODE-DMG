@@ -41,6 +41,30 @@ namespace BRCCodeDmg
         private readonly int[] bgColorIndexBuffer = new int[ScreenWidth];
         private readonly bool[] bgAttrPriorityBuffer = new bool[ScreenWidth];
 
+        public void SaveStateNoBuffers(BinaryWriter writer)
+        {
+            writer.Write(mode);
+            writer.Write(cycles);
+            writer.Write(vblankTriggered);
+            writer.Write(windowLineCounter);
+            writer.Write(windowWyTriggeredThisFrame);
+            writer.Write(lcdPreviouslyOff);
+            writer.Write(lcdBlankFramePending);
+            writer.Write(lcdOffFramePushed);
+        }
+
+        public void LoadStateNoBuffers(BinaryReader reader)
+        {
+            mode = reader.ReadInt32();
+            cycles = reader.ReadInt32();
+            vblankTriggered = reader.ReadBoolean();
+            windowLineCounter = reader.ReadInt32();
+            windowWyTriggeredThisFrame = reader.ReadBoolean();
+            lcdPreviouslyOff = reader.ReadBoolean();
+            lcdBlankFramePending = reader.ReadBoolean();
+            lcdOffFramePushed = reader.ReadBoolean();
+        }
+
         public bool FrameDirty { get; private set; }
 
         public PPU(MMU mmu)
@@ -478,9 +502,12 @@ namespace BRCCodeDmg
             }
         }
 
+        internal string PaletteOverride;
+
         private Color32 ConvertDMGColor(int paletteColor)
         {
-            return Helper.palettes[Helper.paletteName][paletteColor];
+            string p = PaletteOverride ?? Helper.paletteName;
+            return Helper.palettes[p][paletteColor];
         }
 
         private void SetLYCFlag()
@@ -532,7 +559,7 @@ namespace BRCCodeDmg
         private Color32 GetLcdOffBlankColor()
         {
             // GBC: blank to white.
-            // DMG: blank to palette color 0 (your usual green-tinted GB look).
+            // DMG: blank to palette color.
             return mmu.IsCGBMode
                 ? new Color32(255, 255, 255, 255)
                 : ConvertDMGColor(0);

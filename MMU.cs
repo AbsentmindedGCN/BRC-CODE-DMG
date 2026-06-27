@@ -97,6 +97,33 @@ public class MMU
     public APU Apu;
     public Timer Timer;
 
+    // Serial link cable — modelled directly after Linkboy's advanceTimer/handleNetwork
+    // Master interrupt fires after ~100000 cycles.
+    // Linkboy uses 50000 (localhost), but we need headroom for Unity's frame-based
+    // network processing: packets may not arrive until the next frame (~16.7ms = ~70224 cycles).
+    // 100000 cycles ≈ 24ms, safely covering 1 missed Unity frame + network latency.
+    private const int SerialMasterIntThreshold = 75000;   // ~1.1 GB frames — with triple-pump pattern, worst case is 1 frame latency
+    // Slave checks for incoming byte every ~5000 cycles (matches Linkboy)
+    private const int SerialSlaveCheckInterval = 5000;
+
+    private bool _serialMasterActive;  // SC=0x81 detected, transfer in progress
+    private int  _serialMasterCycles;  // cycles since SC=0x81 was written
+    private byte _serialOutByte;       // SB captured at SC=0x81 write time
+
+    // Peer byte slot — holds at most one unread byte from the remote peer.
+    // Only one byte is consumed per exchange (matches Linkboy's one-at-a-time readGameMessage).
+    private int  _linkBitCounter;
+    private bool _serialPeerByteReady;
+    // When true this MMU is the hidden peer emulator; serial driven by ShiftBit, not StepSerialLink.
+    internal bool IsLocalLinked;
+    private byte _serialPeerByte;
+
+    private bool _serialSlaveActive;    // SC=0x80 detected
+    private int  _serialSlaveInCycles;  // cycles since SC=0x80 was written
+
+    private byte SerialScMask    => IsCGBMode ? (byte)0x83 : (byte)0x81;
+    private byte SerialUnusedBits => IsCGBMode ? (byte)0x7C : (byte)0x7E;
+
     public MMU(byte[] gameRom, byte[] bootRomData, bool flatRamMode)
     {
         rom = gameRom;
@@ -225,31 +252,156 @@ public class MMU
         }
     }
 
-    private void CompleteSerialTransfer(byte receivedByte = 0xFF)
+    public void CancelSerial()
     {
-        // Dummy out Link Cable
-        io[0x01] = receivedByte;
+        ResetSerialState();
+        io[0x02] &= (byte)(IsCGBMode ? 0x03 : 0x01);  // clear transfer-start bit 7 only (Linkboy: SC &= ~0x80)
+    }
 
-        // Clear the transfer-start bit at end of transfer, but preserve the selected clock bit (bit 0).
-        io[0x02] = (byte)((io[0x02] & 0x01) | 0x7C);
-        IF |= 0x08;
+    public byte ReadSerialData() => io[0x01];
+
+    // Accessors used by the local link_step (gbmulator: io_registers[IO_SB/IO_SC])
+    internal byte SB { get => io[0x01]; set => io[0x01] = value; }
+    internal byte SC => io[0x02];
+    internal int SerialClockCycles => IsCGBMode && (io[0x02] & 0x02) != 0 ? 16 : 512;
+
+    // gbmulator gb_link_shift_bit: shift in_bit into SB, count 8 bits, fire interrupt.
+    // Returns the bit that was shifted OUT (old MSB of SB).
+    internal int ShiftBit(int inBit)
+    {
+        int outBit = (io[0x01] >> 7) & 1;
+        io[0x01] = (byte)((io[0x01] << 1) | (inBit & 1));
+        if (++_linkBitCounter >= 8)
+        {
+            _linkBitCounter = 0;
+            io[0x02] = (byte)(io[0x02] & ~0x80);  // clear SC bit 7
+            IF |= 0x08;                              // fire serial interrupt
+        }
+        return outBit;
+    }
+
+    internal void LinkReset()
+    {
+        _linkBitCounter  = 0;
+    }
+
+    // Called by LinkCableManager when the remote peer's byte arrives over the network.
+    // Mirrors Linkboy's wrByteMMU(0xFF01, gameMessage): store it without firing interrupt.
+    // Only stores if the slot is empty — one byte per exchange, FIFO (oldest first),
+    // matching Linkboy's readGameMessage which reads one message per handleNetwork call.
+    public void DeliverRemoteSerialByte(byte value)
+    {
+        if (!_serialPeerByteReady)
+        {
+            _serialPeerByteReady = true;
+            _serialPeerByte      = value;
+        }
+        // If slot occupied, the byte is discarded — PumpSerialPackets will call again
+        // next time, keeping the oldest unread byte (correct FIFO ordering).
+    }
+
+    private void ResetSerialState()
+    {
+        _serialMasterActive  = false;
+        _serialMasterCycles  = 0;
+        _serialOutByte       = 0xFF;
+        _serialPeerByteReady = false;
+        _serialPeerByte      = 0xFF;
+        _serialSlaveActive   = false;
+        _serialSlaveInCycles = 0;
     }
 
     private void BeginSerialTransfer(byte controlValue)
     {
-        // Store only the documented writable bits. Bits 1-6 are unused on DMG and generally read back as 1.
-        io[0x02] = (byte)((controlValue & 0x83) | 0x7C);
+        io[0x02] = (byte)(controlValue & SerialScMask);  // store only valid bits (Linkboy: data & 0x81)
 
-        // No transfer requested.
         if ((controlValue & 0x80) == 0)
+        {
+            _serialMasterActive = false;
+            _serialSlaveActive  = false;
             return;
+        }
 
-        // Dummy out Link Cable
-        if ((controlValue & 0x01) == 0)
-            return;
+        if ((controlValue & 0x01) != 0)
+        {
+            // Internal clock (master). Mirrors Linkboy: detect SC=0x81, reset counter.
+            // If already active, ignore re-write.
+            if (_serialMasterActive)
+                return;
 
-        CompleteSerialTransfer(0xFF);
+            _serialMasterActive  = true;
+            _serialMasterCycles  = 0;
+            _serialOutByte       = io[0x01];
+            _serialPeerByteReady = false;
+            _serialPeerByte      = 0xFF;
+            _serialSlaveActive   = false;
+
+            // byte will be exchanged locally via LinkStep each 512 cycles
+        }
+        else
+        {
+            // External clock (slave). Mirrors Linkboy: detect SC=0x80, reset counter.
+            if (_serialSlaveActive)
+                return;
+
+            _serialSlaveActive   = true;
+            _serialSlaveInCycles = 0;
+            _serialMasterActive  = false;
+        }
     }
+
+    // Core serial tick — mirrors Linkboy's advanceTimer serial section exactly.
+    // Called every CPU instruction with the elapsed cycle count.
+    public void StepSerialLink(int cycles)
+    {
+        if (IsLocalLinked) return;  // serial driven by parent emulator's LocalLinkStep
+        // ── Master path ──────────────────────────────────────────────────────
+        if (_serialMasterActive)
+        {
+            _serialMasterCycles += cycles;
+
+            // Complete as soon as the slave response arrives — no need to wait for the
+            // full timeout when we already have the byte. This fires in ~100-200 cycles
+            // after PumpSerialBytes delivers the response, rather than waiting 140448 cycles.
+            if (_serialPeerByteReady)
+            {
+                io[0x01] = _serialPeerByte;
+                io[0x02] &= (byte)(IsCGBMode ? 0x03 : 0x01);
+                ResetSerialState();
+                IF |= 0x08;
+            }
+            else if (_serialMasterCycles >= SerialMasterIntThreshold)
+            {
+                // Timed out — no slave response. Write 0xFF (hardware: line pulled high).
+                io[0x01] = 0xFF;
+                io[0x02] &= (byte)(IsCGBMode ? 0x03 : 0x01);
+                ResetSerialState();
+                IF |= 0x08;
+            }
+        }
+
+        // ── Slave path ───────────────────────────────────────────────────────
+        if (_serialSlaveActive)
+        {
+            _serialSlaveInCycles += cycles;
+
+            if (_serialPeerByteReady)
+            {
+                // Peer byte delivered by PumpSerialBytes (called once per frame).
+                byte received = _serialPeerByte;
+                io[0x01] = received;
+                io[0x02] &= (byte)(IsCGBMode ? 0x03 : 0x01);
+                ResetSerialState();
+                IF |= 0x08;
+            }
+            else if (_serialSlaveInCycles >= SerialSlaveCheckInterval)
+            {
+                _serialSlaveInCycles = 0;
+            }
+        }
+    }
+
+    public void TickSerialLinkWait(float deltaSeconds) { }
 
     // =========================================================================
     // MBC / Save
@@ -369,7 +521,7 @@ public class MMU
                 return (byte)(JOYP | 0xFF);
 
             case 0xFF01: return io[0x01];
-            case 0xFF02: return (byte)(io[0x02] | 0x7C);
+            case 0xFF02: return (byte)(io[0x02] | SerialUnusedBits);
             case 0xFF04: return DIV;
             case 0xFF05: return TIMA;
             case 0xFF06: return TMA;

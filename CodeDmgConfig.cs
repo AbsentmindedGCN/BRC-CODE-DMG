@@ -1,4 +1,4 @@
-﻿using BepInEx.Configuration;
+using BepInEx.Configuration;
 using UnityEngine;
 
 namespace BRCCodeDmg
@@ -7,6 +7,8 @@ namespace BRCCodeDmg
     {
         // ROM
         public ConfigEntry<string> RomPath;
+        public ConfigEntry<string> RomDirectory;
+        public ConfigEntry<bool> LoadLastPlayed;
 
         // Controls
         public ConfigEntry<KeyCode> Up;
@@ -18,6 +20,7 @@ namespace BRCCodeDmg
         public ConfigEntry<KeyCode> B;
         public ConfigEntry<KeyCode> Start;
         public ConfigEntry<KeyCode> Select;
+        public ConfigEntry<bool> SwapButtons;
 
         // Save states
         public ConfigEntry<bool> AutoSaveOnClose;
@@ -37,6 +40,13 @@ namespace BRCCodeDmg
         public ConfigEntry<int> Volume;
         public ConfigEntry<string> AudioLatency;
 
+        // Link Cable
+        public ConfigEntry<bool> LinkCableEnabled;
+        public ConfigEntry<int> LinkInputDelayFrames;
+        public ConfigEntry<bool> HideLinkStatusWhenDisconnected;
+        public ConfigEntry<bool> ShowPeerScreen;
+        public ConfigEntry<string> PeerScreenPalette;
+
         public CodeDmgConfig(ConfigFile config)
         {
             RomPath = config.Bind(
@@ -44,6 +54,20 @@ namespace BRCCodeDmg
                 "RomPath",
                 "",
                 "Path to ROM file (.gb or .gbc). Leave empty to use rom.gbc / rom.gb in plugin folder."
+            );
+
+            RomDirectory = config.Bind(
+                "Change Game ROM",
+                "RomDirectory",
+                "",
+                "Folder to scan for ROM files shown in the Change Game menu. \n Leave this field empty to use the default ROMs folder: \n \\Documents\\Bomb Rush Cyberfunk Modding\\BRCGameBoyEmu\\Roms"
+            );
+
+            LoadLastPlayed = config.Bind(
+                "Change Game ROM",
+                "LoadLastPlayed",
+                true,
+                "Load last ROM played automatically when booting the emulator. Overrides the RomPath above."
             );
 
             Up = config.Bind("Controls", "Up", KeyCode.W, "D-pad Up");
@@ -55,6 +79,13 @@ namespace BRCCodeDmg
             B = config.Bind("Controls", "B", KeyCode.Comma, "GB B button");
             Start = config.Bind("Controls", "Start", KeyCode.Return, "GB Start button");
             Select = config.Bind("Controls", "Select", KeyCode.RightShift, "GB Select button");
+
+            SwapButtons = config.Bind(
+                "Controls",
+                "SwapButtons",
+                false,
+                "Swap A/B buttons on controllers. Useful for pads that use a Switch button layout, but are in XInput mode."
+            );
 
             AutoSaveOnClose = config.Bind(
                 "SaveStates",
@@ -132,6 +163,44 @@ namespace BRCCodeDmg
                 new ConfigDescription(
                     "Audio latency preset. The lower the value, the more chance for popping.",
                     new AcceptableValueList<string>("Very High", "High", "Normal", "Low")
+                )
+            );
+
+            LinkCableEnabled = config.Bind(
+                "Link Cable",
+                "LinkCableEnabled",
+                true,
+                "Emulate the Game Boy Link Cable. Requires ACN. \n (Experimental feature!! Backup your saves before using!!)"
+            );
+
+            LinkInputDelayFrames = config.Bind(
+                "Link Cable",
+                "LinkInputDelayFrames",
+                8,
+                "Input delay setting for Link Cable emulation. The higher the value, the higher the input delay. Lower values will make gameplay choppy, lag, and much more likely to desync. Host's value is used."
+            );
+
+            HideLinkStatusWhenDisconnected = config.Bind(
+                "Link Cable",
+                "HideLinkStatusWhenDisconnected",
+                true,
+                "Hide the Link Cable status text when not connected with another player."
+            );
+
+            ShowPeerScreen = config.Bind(
+                "Link Cable",
+                "ShowPeerScreen",
+                true,
+                "Renders the second GB / GBC emulator used for link cable emulation. This emulator attempts to clone the other player's emulator state, but can desync. Disable for a slight performance increase."
+            );
+
+            PeerScreenPalette = config.Bind(
+                "Link Cable",
+                "PeerScreenPalette",
+                Helper.DefaultPeerPaletteName,
+                new ConfigDescription(
+                    "Select the palette used by the second emulator. Default is a BRC-inspired DMG palette.",
+                    new AcceptableValueList<string>(Helper.PaletteNames)
                 )
             );
         }
