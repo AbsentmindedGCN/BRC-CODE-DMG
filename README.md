@@ -54,7 +54,7 @@ There's a lot of great Game Boy and Game Boy Color [Homebrew ROMs on itch.io](ht
 ---
 
 ## Notes
-- Link Cable/Multiplayer is in early stages, and reequires [All City Network](https://thunderstore.io/c/bomb-rush-cyberfunk/p/Freesoul/All_City_Network/).
+- Link Cable/Multiplayer is in early stages, and requires [All City Network](https://thunderstore.io/c/bomb-rush-cyberfunk/p/Freesoul/All_City_Network/).
 - IR emulation is currently not supported.
 
 ---
